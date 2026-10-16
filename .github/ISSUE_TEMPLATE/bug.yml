@@ -1,0 +1,46 @@
+name: Bug report
+description: Something is wrong with the metrics HUD
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please fill in the Pi version — most issues are
+        version-dependent, since the extension's supported range is not uniform.
+  - type: input
+    id: pi-version
+    attributes:
+      label: Pi version
+      description: Output of `pi --version`
+      placeholder: "1.2.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and terminal
+      placeholder: "macOS 15, iTerm2 3.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: style
+    attributes:
+      label: HUD style
+      options: ["normal", "compact", "not sure"]
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you saw instead. Paste the HUD output if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Relevant settings
+      description: The `pi-metrics` block from your settings.json, if you changed it.
+      render: json
+    validations:
+      required: false

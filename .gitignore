@@ -1,0 +1,5 @@
+node_modules/
+*.tgz
+pi-metrics-trace*.log
+PI_METRICS_TRACE*
+.DS_Store
