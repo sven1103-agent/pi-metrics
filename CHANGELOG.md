@@ -29,5 +29,16 @@ rename of them:
   The recording window and the chart ceiling now sit together on the right of the title.
 - The chart title protects the axis under truncation: on a narrow terminal the stats give
   way, not the scale.
+- `placement` works as documented. Pi compares the value against `belowEditor` exactly and
+  silently treats anything else as "above", so the `below` spelling this extension's own
+  usage line printed moved nothing and said nothing. Both spellings are now accepted, and an
+  unusable value is reported at startup as a warning *and* replaced by the default.
+- `/metrics` gained `placement`, `style`, `graph`, `color` and `report` subcommands. They
+  apply immediately and print the `settings.json` line that persists them; the extension
+  does not write that file itself, because the extension API exposes no settings-write call
+  and editing it underneath Pi's settings manager can drop unrelated keys. An unrecognised
+  subcommand now warns instead of silently toggling the HUD.
+- `cost` is honoured. It was declared, defaulted and documented, but read by nothing; it
+  now gates the cost column in `/metrics report` and on the persisted card.
 
 [0.1.0]: https://github.com/sven1103-agent/pi-metrics/releases/tag/v0.1.0

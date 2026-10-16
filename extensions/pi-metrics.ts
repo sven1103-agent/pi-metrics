@@ -21,11 +21,11 @@
  * outer edge (and names the model); the editor's own border closes it at the bottom,
  * so the block reads as one framed band instead of running into the transcript:
  *
- *   ─ pi-metrics · deepseek-v3.1 ───────────────────────────── 3 calls ─
- *   ○ waiting  ● writing  ‖ paused  ✔ done  [█████░░░░░░░]  38.0 tok/s  (usage)  255 tok
- *   TPS  ▃▄▄▁▁█▄▄▆▅  · avg   34 tok/s · p95   46 tok/s       65s  ·  max 100 auto
- *   STATS  split 76/24 conn/prefill  med first 371ms  med ITL 28ms  p95 ITL 45ms  3 calls
- *   HIST TTFT ▁▂▃▅▇█▇▅▃▂ 1.8s  │  ITL ▂▃▅▇█▆▄ 41ms  (12 calls)
+ *   ─ pi-metrics · demo-model ─────────────────────────────────────────────────── 5 calls ─
+ *   ○ waiting  ● writing  ‖ paused  ✔ done  [░░░░░░░░░░░░]  63.2 tok/s  (usage)  120 tok
+ *   TPS      ▇▅▃▂▂▂▂▄  · avg    31 tok/s · p95    71 tok/s · 2.3s/col  30s  ·  max 100 auto
+ *   STATS  split 25/75 conn/prefill  med first 400ms  med ITL 22ms  p95 ITL 75ms  5 calls
+ *   HIST TTFT █▃▆█▁                  400ms  │  ITL ▁▂▆█▁                  22ms  (5 calls)
  *
  * The layout never changes: row 1 always shows every state with the active one
  * highlighted, so there is nothing to re-read mid-response.

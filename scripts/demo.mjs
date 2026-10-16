@@ -17,10 +17,12 @@
  *   node scripts/demo.mjs compact
  *   node scripts/demo.mjs braille --dump    # a few plain frames, no ANSI, no delays
  *   node scripts/demo.mjs braille --markdown  # the README's static frame, on stdout
+ *   DEMO_WIDTH=88 node scripts/demo.mjs compact --source-frame   # the docblock example
  *
- * `--markdown` is what keeps the README honest: the static excerpt there is emitted from the
- * same timeline as the GIF rather than typed by hand, so it cannot drift away from what the
- * animation actually shows.
+ * `--markdown` and `--source-frame` are what keep the docs honest: the two quoted frames
+ * are emitted from the same timeline as the GIF rather than typed by hand, so they cannot
+ * drift away from what the animation actually shows. scripts/docs-sync.test.mjs asserts
+ * both, and fails the build when either is edited without being regenerated.
  *
  * The virtual clock is load-bearing. The HUD measures elapsed time with
  * `performance.now()`, so on a real clock — where the script emits a whole call in a few
@@ -54,8 +56,12 @@ const MODE = MODES[modeName];
 const DUMP = argv.includes("--dump") || argv.some((arg) => arg.startsWith("--dump="));
 const DUMP_ALL = argv.includes("--dump=all");
 const MARKDOWN = argv.includes("--markdown");
+/** Emit the frame quoted in the source file's header docblock, ` *   `-prefixed. */
+const SOURCE_FRAME = argv.includes("--source-frame");
 
-const WIDTH = 100;
+/** Render width. Overridable so a documentation comment can quote a narrower frame. */
+const widthArg = argv.find((arg) => arg.startsWith("--width="));
+const WIDTH = Number(widthArg ? widthArg.slice("--width=".length) : process.env.DEMO_WIDTH ?? 100);
 /** Virtual milliseconds per rendered frame. 100ms gives 10 frames per TPS column. */
 const FRAME_MS = 100;
 /**
@@ -232,9 +238,9 @@ function paint(lines) {
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-if (DUMP || MARKDOWN) {
+if (DUMP || MARKDOWN || SOURCE_FRAME) {
   // A handful of plain frames, for eyeballing and for CI. No ANSI, no waiting.
-  const picks = DUMP_ALL || MARKDOWN ? null : [0.28, 0.5, 0.68, 0.86, 1];
+  const picks = DUMP_ALL || MARKDOWN || SOURCE_FRAME ? null : [0.28, 0.5, 0.68, 0.86, 1];
   const frames = [];
   for (let t = 0; t <= totalVirtualMs; t += FRAME_MS) {
     vnow = ORIGIN + t;
@@ -242,6 +248,38 @@ if (DUMP || MARKDOWN) {
     frames.push(renderFrame().map(plain));
   }
   const chosen = picks === null ? frames : picks.map((p) => frames[Math.min(frames.length - 1, Math.round((frames.length - 1) * p))]);
+
+  if (SOURCE_FRAME) {
+    // The docblock example must be a frame the renderer actually produces. Prefer a
+    // finished call with an authoritative count, and avoid any frame that happens to be
+    // truncated — an example littered with `…` reads as a broken HUD rather than a
+    // representative one. Regenerate, never hand-edit: scripts/docs-sync.test.mjs asserts
+    // the source file contains this output verbatim.
+    const score = (lines) => {
+      const text = lines.join("\n");
+      let points = 0;
+      if (/\(usage\)/.test(text)) points += 6;
+      const calls = /(\d+) calls/.exec(text);
+      if (calls) points += Math.min(5, Number(calls[1]));
+      // A truncation marker anywhere means the frame is mid-flight in an ugly way.
+      if (text.includes("…")) points -= 20;
+      if (/waiting \d/.test(text)) points += 1;
+      return points;
+    };
+    let best = chosen[0];
+    let bestScore = -Infinity;
+    for (const lines of chosen) {
+      const points = score(lines);
+      if (points > bestScore) {
+        bestScore = points;
+        best = lines;
+      }
+    }
+    // Two spaces after `*`, so the render's own single-space indent lands at the same
+    // column the surrounding docblock uses.
+    for (const line of best) console.log(` *  ${line.replace(/\s+$/, "")}`);
+    process.exit(0);
+  }
 
   if (MARKDOWN) {
     // Pick the frame that best shows the states worth advertising: a finished session with a
