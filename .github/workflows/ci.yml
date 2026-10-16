@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # The API contract: the extension must typecheck strictly against the
+      # Pi typings it declares support for.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # Catches refactor breakage a typecheck cannot: the registered command,
+      # entry renderer and event handlers.
+      - name: Factory smoke test
+        run: node scripts/smoke.mjs
+
+      # The real gate. NOTE: `pi --help` and `pi --list-models` also load the
+      # extension but swallow load failures (exit 0), so they are useless here.
+      # Print mode exits 1 with "Failed to load extension" when the factory
+      # throws. Verified against a deliberately broken extension.
+      - name: Load gate (real pi binary)
+        env:
+          PI_OFFLINE: "1"
+          PI_SKIP_VERSION_CHECK: "1"
+          PI_TELEMETRY: "0"
+        run: |
+          set -o pipefail
+          export PI_CODING_AGENT_DIR="$(mktemp -d)"
+          out="$(npx pi --no-extensions -e extensions/pi-metrics.ts -p --no-session --no-tools "hi" 2>&1 || true)"
+          if grep -q "Failed to load extension" <<<"$out"; then
+            echo "::error::extension failed to load"
+            echo "$out"
+            exit 1
+          fi
+          echo "extension loaded without error"
+
+      # Reporting, not a gate. There are no runtime dependencies, so advisories
+      # can only come from dev tooling; blocking unrelated PRs on those would be
+      # noise. Dependabot proposes the fixes.
+      - name: Dependency audit
+        continue-on-error: true
+        run: npm audit --audit-level=high

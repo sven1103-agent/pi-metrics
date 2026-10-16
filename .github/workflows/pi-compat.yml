@@ -1,0 +1,113 @@
+name: pi-compat
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Gating lane: versions the extension claims to support. Must stay green.
+  supported:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        pi: ["1.1.0", "1.2.0", "1.3.0"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Pin all three host packages to the same Pi release. They are
+      # peerDependencies at "*", so this overrides them for the run only.
+      - name: Install Pi ${{ matrix.pi }}
+        run: |
+          npm install --no-save --no-audit --no-fund \
+            "@earendil-works/pi-coding-agent@${{ matrix.pi }}" \
+            "@earendil-works/pi-ai@${{ matrix.pi }}" \
+            "@earendil-works/pi-tui@${{ matrix.pi }}"
+
+      - name: Typecheck against Pi ${{ matrix.pi }}
+        run: npx tsc --noEmit
+
+      - name: Factory smoke test
+        run: node scripts/smoke.mjs
+
+      - name: Load gate (real pi binary)
+        env:
+          PI_OFFLINE: "1"
+          PI_SKIP_VERSION_CHECK: "1"
+          PI_TELEMETRY: "0"
+        run: |
+          set -o pipefail
+          export PI_CODING_AGENT_DIR="$(mktemp -d)"
+          out="$(npx pi --no-extensions -e extensions/pi-metrics.ts -p --no-session --no-tools "hi" 2>&1 || true)"
+          if grep -q "Failed to load extension" <<<"$out"; then
+            echo "::error::extension failed to load on Pi ${{ matrix.pi }}"
+            echo "$out"
+            exit 1
+          fi
+          echo "loaded on Pi ${{ matrix.pi }}"
+
+  # Informational lane: below the supported floor the published typings are
+  # known to be incomplete, so failures here are expected and must not gate.
+  # This documents the lower bound by evidence rather than by memory.
+  legacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        pi: ["0.99.2", "1.0.0", "1.0.4"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Pi ${{ matrix.pi }}
+        run: |
+          npm install --no-save --no-audit --no-fund \
+            "@earendil-works/pi-coding-agent@${{ matrix.pi }}" \
+            "@earendil-works/pi-ai@${{ matrix.pi }}" \
+            "@earendil-works/pi-tui@${{ matrix.pi }}"
+
+      - name: Typecheck against Pi ${{ matrix.pi }} (expected to fail before 1.1.0)
+        run: npx tsc --noEmit
+
+      - name: Load gate — should still pass, the type floor is not the runtime floor
+        env:
+          PI_OFFLINE: "1"
+          PI_SKIP_VERSION_CHECK: "1"
+          PI_TELEMETRY: "0"
+        run: |
+          set -o pipefail
+          export PI_CODING_AGENT_DIR="$(mktemp -d)"
+          out="$(npx pi --no-extensions -e extensions/pi-metrics.ts -p --no-session --no-tools "hi" 2>&1 || true)"
+          if grep -q "Failed to load extension" <<<"$out"; then
+            echo "::error::extension failed to load on Pi ${{ matrix.pi }}"
+            echo "$out"
+            exit 1
+          fi
+          echo "loaded on Pi ${{ matrix.pi }}"
