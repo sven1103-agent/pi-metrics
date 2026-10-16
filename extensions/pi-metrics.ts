@@ -28,7 +28,7 @@
  *   ─ pi-metrics · demo-model ─────────────────────────────────────────────────── 5 calls ─
  *   ○ waiting  ● writing  ‖ paused  ✔ done  [░░░░░░░░░░░░]  61.5 tok/s  (usage)  80 tok
  *   TPS         ▇▄▃▃▃▃▂▂▂▂▂▂▂▄▄▂  · avg    26 tok/s · p95    62 tok/s  20s  ·  max 100 auto
- *   STATS  split 25/75 conn/prefill  med first 400ms  med ITL 22ms  p95 ITL 74ms  5 calls
+ *   STATS  med conn/pre 100ms/300ms  med first 400ms  med ITL 22ms  p95 ITL 74ms  5 calls
  *   HIST TTFT ▆▃▅█▁                  400ms  │  ITL ▁▂▆█▁                  22ms  (5 calls)
  *
  * The layout never changes: row 1 always shows every state with the active one
@@ -54,8 +54,14 @@
  * to notice and applied inconsistently (a finished call with no usage printed no `~` at
  * all, despite being an estimate).
  *
- * Row 3 shows SESSION medians — `med first` and `med ITL` — plus p95 ITL and the call
+ * Row 3 shows SESSION medians — `med conn/pre` (the `conn`/`prefill` halves of TTFT, each
+ * its own median), `med first` and `med ITL` — plus p95 ITL and the call
  * count; the full breakdown of a single call is in `/metrics report`.
+ * `med conn/pre` and `med first` are independent statistics: medians are not additive, so
+ * the two halves need not sum to the `med first` printed beside them, and the pair is not
+ * presented as a decomposition. It used to be printed as a percentage, which collapsed to
+ * `100/0` whenever connecting dominated prefilling — the common case — and so hid the
+ * magnitude that actually tells you whether 400ms of TTFT is worth chasing.
  * Median rather than mean because latency has a long right tail (cold connections,
  * provider queueing): the mean is dragged by single outliers, and the HIST row and the
  * severity colouring already key off the median.
@@ -1029,11 +1035,13 @@ function renderStatsRow(state: HudState, theme: Theme): string {
 
   const connMedian = percentile(conns, 0.5);
   const prefillMedian = percentile(prefills, 0.5);
-  if (prefills.length > 0 && connMedian !== undefined && prefillMedian !== undefined && connMedian + prefillMedian > 0) {
-    // Shares of TTFT, so the pair reads without needing a baseline: 86% conn is
-    // connection-bound, 86% prefill is server-bound.
-    const share = Math.round((connMedian / (connMedian + prefillMedian)) * 100);
-    segments.push(theme.fg("text", `split ${share}/${100 - share} conn/prefill`));
+  if (connMedian !== undefined && prefillMedian !== undefined) {
+    // Absolute medians, not a share. `conn` is request → response headers (TTFB, folding in
+    // server-side queueing) and `prefill` is headers → first token; when the first dwarfs the
+    // second the share rounds to 100/0, which is the common case and tells the reader nothing
+    // about magnitude. Two separate medians, so they are two statistics and not halves of the
+    // `med TTFT` beside them — the medians of the parts need not sum to the median of the sum.
+    segments.push(theme.fg("text", `med conn/pre ${fmtMs(connMedian)}/${fmtMs(prefillMedian)}`));
   }
   segments.push(theme.fg("text", `med first ${fmtMs(percentile(ttfts, 0.5))}`));
   segments.push(theme.fg("text", `med ITL ${fmtMs(percentile(itls, 0.5))}`));

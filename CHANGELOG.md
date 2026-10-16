@@ -9,7 +9,8 @@ First public release.
 - Live HUD above or below the editor: per-call state, decode throughput, token count.
 - Session TPS timeline — tokens per second, one column per completed second, never
   reset per call, so separate writing actions stay comparable.
-- Session STATS — median first-token time, median inter-token latency and p95 ITL.
+- Session STATS — median first-token time, its `conn`/`prefill` split, median
+  inter-token latency and p95 ITL.
 - HIST timelines for TTFT and ITL with median and max.
 - `/metrics` command to toggle, reset, move the panel, or print a per-call report
   table with TTFT, `conn`/`prefill`, ITL, tok/s, TTOUT, tokens and cost.
@@ -33,6 +34,11 @@ rename of them:
   silently treats anything else as "above", so the `below` spelling this extension's own
   usage line printed moved nothing and said nothing. Both spellings are now accepted, and an
   unusable value is reported at startup as a warning *and* replaced by the default.
+- The STATS `conn`/`prefill` split is shown as two millisecond medians, not a percentage.
+  `conn` (request → response headers) usually dwarfs `prefill` (headers → first token), so
+  the share rounded to `100/0` in the common case and hid the magnitude that actually tells
+  you whether the wait is worth chasing. The two are separate medians, not a decomposition:
+  medians are not additive, so they need not sum to the `med first` printed beside them.
 - `/metrics` gained `placement`, `style`, `graph`, `color` and `report` subcommands. They
   apply immediately and print the `settings.json` line that persists them; the extension
   does not write that file itself, because the extension API exposes no settings-write call

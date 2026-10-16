@@ -32,7 +32,7 @@ The same session in `graphStyle: "block"`:
  ⣿⡇                                               │ ⣼⡇
  ⣿⡇⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂ │ ⣿⡇⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂
  ───────────────────────────────────────────────────────────────────────────────────────────────────
- STATS  split 25/75 conn/prefill  med first 400ms  med ITL 22ms  p95 ITL 38ms  3 calls
+ STATS  med conn/pre 100ms/300ms  med first 400ms  med ITL 22ms  p95 ITL 38ms  3 calls
 ```
 
 </details>
@@ -126,9 +126,11 @@ configuration, not measurement, and printing them invited reading them as result
 
 - **TTFT** — request → first streamed token, as a session median. `/metrics report` splits
   it further into `conn` (request → response headers) and `prefill` (headers → first
-  token) when the provider exposes the boundary; the live HUD shows the pair as a
-  percentage, and the report shows `–` otherwise. `conn` folds in server-side queueing, so
-  the split compares calls to the *same* provider rather than across providers.
+  token) when the provider exposes the boundary; the live HUD shows the pair as its two
+  session medians in milliseconds, and both show `–` otherwise. The two are separate
+  statistics — medians are not additive, so they need not sum to the `med first` beside
+  them. `conn` folds in server-side queueing, so the split compares calls to the *same*
+  provider rather than across providers.
 - **ITL** — gap between streamed deltas, as a session median and p95. This is stream
   *smoothness*, not throughput: some providers batch several tokens into one delta.
 - **tok/s** — decode throughput, tagged with its source: `(usage)` when the provider
