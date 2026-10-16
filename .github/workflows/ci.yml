@@ -32,10 +32,11 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      # Catches refactor breakage a typecheck cannot: the registered command,
-      # entry renderer and event handlers.
-      - name: Factory smoke test
-        run: node scripts/smoke.mjs
+      # Behavioural tests. These render the real HUD, because the token-accuracy
+      # logic is multiplicative — a mistake there still looks plausible on screen,
+      # and a typecheck cannot tell "corrected" from "not corrected".
+      - name: Test
+        run: npm test
 
       # The real gate. NOTE: `pi --help` and `pi --list-models` also load the
       # extension but swallow load failures (exit 0), so they are useless here.

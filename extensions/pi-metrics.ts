@@ -22,9 +22,9 @@
  * so the block reads as one framed band instead of running into the transcript:
  *
  *   ─ pi-metrics · deepseek-v3.1 ───────────────────────────── 3 calls ─
- *   ○ waiting  ● writing  ‖ paused  ✔ done  [█████░░░░░░░]  ~38 tok/s  ~255 tok
- *   RATE 65s  ▃▄▄▁▁█▄▄▆▅  · avg   34 tok/s · p95   46 tok/s
- *   STATS  avg first 371ms  avg ITL 28ms  p95 ITL 45ms  3 calls
+ *   ○ waiting  ● writing  ‖ paused  ✔ done  [█████░░░░░░░]  38 tok/s  255 tok
+ *   TPS 65s  ▃▄▄▁▁█▄▄▆▅  · avg   34 tok/s · p95   46 tok/s
+ *   STATS  split 76/24 conn/prefill  med first 371ms  med ITL 28ms  p95 ITL 45ms  3 calls
  *   HIST TTFT ▁▂▃▅▇█▇▅▃▂ 1.8s  │  ITL ▂▃▅▇█▆▄ 41ms  (12 calls)
  *
  * The layout never changes: row 1 always shows every state with the active one
@@ -34,19 +34,31 @@
  *   ‖ paused    a token is overdue (`waiting Xs` appears at the end)
  *   ✔ done      the call finished; the values freeze
  *
- * The pressure bar is throughput against the RATE scale (full at the `good` baseline).
- * Colour has four bands, keyed to `rateFast` (100), `rateGood` (30) and
- * `rateBad` (15): green at/above `rateGood` (a brighter green at `rateFast`), amber
- * between `rateGood` and `rateBad`, and red below `rateBad`. The bar empties once
- * writing stops. Row 3 shows the SESSION averages
- * (mean first token, mean ITL, mean tok/s) and the call count; the full breakdown of a
- * single call is in `/metrics report`.
+ * The pressure bar is throughput against the TPS scale (full at the `good` baseline).
+ * Colour has four bands, keyed to `tpsFast` (100), `tpsGood` (30) and
+ * `tpsBad` (15): green at/above `tpsGood` (a brighter green at `tpsFast`), amber
+ * between `tpsGood` and `tpsBad`, and red below `tpsBad`. The bar empties once
+ * writing stops. Row 3 shows SESSION medians — `med first` and `med ITL` — plus p95 ITL
+ * and the call count; the full breakdown of a single call is in `/metrics report`.
+ * Median rather than mean because latency has a long right tail (cold connections,
+ * provider queueing): the mean is dragged by single outliers, and the HIST row and the
+ * severity colouring already key off the median.
  *
- * The RATE row is what the provider is actually delivering: one column per completed
+ * The TPS row is what the provider is actually delivering: one column per completed
  * writing second, height = tokens generated in that second (≈ tok/s). It is a SESSION
  * timeline — a new response keeps appending to it instead of resetting it, so you can
  * compare writing actions. Empty columns are seconds with no tokens. The trailing stats
- * are the session's observed average and p95 rate, plus the call count.
+ * are the session's observed *mean* and p95 throughput, plus the call count. Throughput
+ * stays a mean deliberately: a stalled second is delivered throughput, not noise, and a
+ * median would flatter it.
+ *
+ * Token counts are the provider's own (`usage.output`) whenever it reports them, and the
+ * live figure during streaming is an estimate from streamed characters. Once a call ends
+ * the real count replaces the estimate in the TPS history too, so a finished call's
+ * throughput is exact rather than approximately right. When a provider reports nothing,
+ * the divisor is calibrated from the session's own completed calls: measured over 39k
+ * real calls the true characters-per-token ranges from ~3.0 to ~3.8 by provider, so a
+ * fixed 4 is wrong by ~19% typically and ~49% at p90. Estimated values are prefixed `~`.
  *
  * While a call streams, the widget repaints on a timer so a stalled second shows up as
  * it happens, and the completed second is the one plotted (the in-progress second is
@@ -72,13 +84,17 @@
  *       "style": "normal",             // "compact" | "normal"
  *       "graphStyle": "braille",       // "braille" | "block"
  *       "colorMode": "calm",           // "calm" | "vivid" | "mono"
- *       "rateWindow": 120,             // seconds of history in the RATE chart
- *       "rateMax": "auto",            // "auto" (session p98, floor `rateFast`) or a fixed tok/s
- *       "rateGood": 30,               // at/above this = good (green)
- *       "rateBad": 15,                // below this = bad (red); 15-30 is the amber band
- *       "rateFast": 100               // at/above this = fast (excellent)
+ *       "tpsWindow": 120,             // seconds of history in the TPS chart
+ *       "tpsMax": "auto",            // "auto" (session p98, floor `tpsFast`) or a fixed tok/s
+ *       "tpsGood": 30,               // at/above this = good (green)
+ *       "tpsBad": 15,                // below this = bad (red); 15-30 is the amber band
+ *       "tpsFast": 100,              // at/above this = fast (excellent)
+ *       "charsPerToken": "auto"       // "auto" (calibrate from this session) or a fixed divisor
  *     }
  *   }
+ *
+ * The `rateWindow`/`rateMax`/`rateGood`/`rateBad`/`rateFast` spellings from before 0.1.0
+ * are still read as aliases and never written back.
  */
 
 import { appendFileSync } from "node:fs";
@@ -118,19 +134,26 @@ interface MetricsSettings {
   graphStyle?: "braille" | "block";
   /** Colour intensity: "calm" (quiet when healthy), "vivid", or "mono". */
   colorMode?: "calm" | "vivid" | "mono";
-  /** Seconds of history shown by the RATE chart. */
-  rateWindow?: number;
+  /** Seconds of history shown by the TPS chart. */
+  tpsWindow?: number;
   /**
-   * Top of the RATE graph and pressure-bar fill, in tok/s, or "auto" to derive it from
-   * the session's own p98 (never below `rateFast`, so a slow provider is not zoomed in).
+   * Top of the TPS graph and pressure-bar fill, in tok/s, or "auto" to derive it from
+   * the session's own p98 (never below `tpsFast`, so a slow provider is not zoomed in).
    */
-  rateMax?: number | "auto";
-  /** "Good" threshold: at or above this the rate is green, below it ramps through amber. */
-  rateGood?: number;
-  /** "Bad" threshold: below this the rate is red; `rateGood`..`rateBad` is the amber band. */
-  rateBad?: number;
-  /** "Fast" threshold: at or above this the rate reads as excellent. */
-  rateFast?: number;
+  tpsMax?: number | "auto";
+  /** "Good" threshold: at or above this TPS is green, below it ramps through amber. */
+  tpsGood?: number;
+  /** "Bad" threshold: below this TPS is red; `tpsBad`..`tpsGood` is the amber band. */
+  tpsBad?: number;
+  /** "Fast" threshold: at or above this TPS reads as excellent. */
+  tpsFast?: number;
+  /**
+   * Fallback divisor for estimating tokens from streamed characters when the provider
+   * reports no usage. Measured across 39k real calls, characters-per-token ranges from
+   * ~3.0 (DeepSeek) to ~3.8 (Kimi), so no constant is correct for every provider —
+   * hence "auto", which calibrates from this session's own completed calls.
+   */
+  charsPerToken?: number | "auto";
 }
 
 type ResolvedSettings = Required<MetricsSettings>;
@@ -146,11 +169,26 @@ const DEFAULTS: ResolvedSettings = {
   style: "normal",
   graphStyle: "braille",
   colorMode: "calm",
-  rateWindow: 120,
-  rateMax: "auto",
-  rateGood: 30,
-  rateBad: 15,
-  rateFast: 100,
+  tpsWindow: 120,
+  tpsMax: "auto",
+  tpsGood: 30,
+  tpsBad: 15,
+  tpsFast: 100,
+  charsPerToken: "auto",
+};
+
+/**
+ * Pre-0.1.0 spellings. Renamed to `tps*` because TPS is the term the ecosystem uses
+ * (`pi-tps`, `pi-token-speed`, ...) and `RATE` was neither that nor self-consistent —
+ * the rest of the HUD already said tok/s. Accepted read-only so an existing config
+ * keeps working; never written back.
+ */
+const LEGACY_SETTING_ALIASES: Record<string, keyof MetricsSettings> = {
+  rateWindow: "tpsWindow",
+  rateMax: "tpsMax",
+  rateGood: "tpsGood",
+  rateBad: "tpsBad",
+  rateFast: "tpsFast",
 };
 
 function readSettings(pi: ExtensionAPI): ResolvedSettings {
@@ -162,9 +200,16 @@ function readSettings(pi: ExtensionAPI): ResolvedSettings {
   }
   const merged = { ...DEFAULTS };
   if (raw && typeof raw === "object") {
-    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const source = raw as Record<string, unknown>;
+    for (const [key, value] of Object.entries(source)) {
       if (value === undefined || value === null) continue;
       (merged as Record<string, unknown>)[key] = value;
+    }
+    // A legacy key only applies when its replacement is absent, so a config that sets
+    // both keeps the new name.
+    for (const [legacy, current] of Object.entries(LEGACY_SETTING_ALIASES)) {
+      if (source[legacy] === undefined || source[current] !== undefined) continue;
+      (merged as Record<string, unknown>)[current] = source[legacy];
     }
   }
   return merged;
@@ -199,6 +244,19 @@ interface CallStats {
   rateBuckets: number[];
   /** How many of those seconds are already copied into the session history. */
   flushedSeconds: number;
+  /**
+   * Characters-per-token divisor actually used for this call's buckets. Captured at
+   * flush time so a later calibration does not reinterpret bucket units, and so the
+   * retroactive correction (see `correctCallTokens`) divides by the same number the
+   * buckets were built with.
+   */
+  bucketDivisor: number;
+  /**
+   * Set once `usage.output` has been applied to the flushed buckets. Guarantees the
+   * correction is applied at most once — it is multiplicative, so re-running it on a
+   * finished call would compound and corrupt the chart.
+   */
+  tokensCorrected: boolean;
   chunks: number;
   chars: number;
   usage?: Usage;
@@ -223,6 +281,14 @@ interface HudState {
   pendingHeadersPerf?: number;
   /** Session-wide per-second token counts, across every call; never reset per call. */
   rateHistory: number[];
+  /**
+   * Session-local calibration: characters observed and the provider-reported tokens they
+   * produced. Used to derive `charsPerToken` for calls that report no usage, which is
+   * strictly better than a fixed constant — measured over 39k real calls, a fixed 4
+   * carries ~19% median error because the true ratio varies by provider and model.
+   */
+  calibrationChars: number;
+  calibrationTokens: number;
 }
 
 interface SerializedCall {
@@ -242,6 +308,7 @@ interface SerializedCall {
   gapKinds: TokenKind[];
   rateBuckets: number[];
   flushedSeconds: number;
+  bucketDivisor: number;
   chunks: number;
   chars: number;
   usage?: Usage;
@@ -449,12 +516,12 @@ function niceCeil(value: number): number {
  * llama.cpp and a 400 tok/s API: too high and the fast provider is a solid slab, too low
  * and a slow one looks pegged. So "auto" tracks the session's own p98.
  *
- * The `rateFast` floor is what keeps that honest: without it a slow session would get
- * `max ≈ 30` and a mediocre provider would fill the chart. With it, `rateGood` can never
+ * The `tpsFast` floor is what keeps that honest: without it a slow session would get
+ * `max ≈ 30` and a mediocre provider would fill the chart. With it, `tpsGood` can never
  * sit higher than 30% of the height, so "below the good line" always reads as low.
  */
-function resolveRateMax(history: number[], setting: number | "auto", rateFast: number): { max: number; auto: boolean } {
-  const floor = Math.max(1, rateFast);
+function resolveRateMax(history: number[], setting: number | "auto", tpsFast: number): { max: number; auto: boolean } {
+  const floor = Math.max(1, tpsFast);
   // A non-positive number is a typo, not a request for a 1 tok/s axis; treat it as auto.
   if (setting !== "auto" && Number.isFinite(setting) && setting > 0) return { max: setting, auto: false };
   const p98 = percentile(history, 0.98);
@@ -463,8 +530,82 @@ function resolveRateMax(history: number[], setting: number | "auto", rateFast: n
 }
 
 /**
+ * Characters-per-token, used ONLY while a call is still streaming or when the provider
+ * never reports usage. Measured across 39k real calls with provider-reported output
+ * tokens as ground truth, the true ratio is not a constant:
+ *
+ *   median 3.27, p10 2.04, p90 4.22   (so a fixed 4 carries ~19% median error)
+ *   litellm 3.04 · openrouter 3.44 · opencode-go 3.70 · opencode 3.79
+ *   DeepSeek-V4-Flash 2.96 · kimi-k2.6 3.84
+ *
+ * So the default is `auto`: calibrate from this session's own completed calls, which
+ * measurably reduces the error and adapts per provider. A fixed number is accepted for
+ * anyone who wants reproducibility.
+ */
+function resolveCharsPerToken(state: HudState, setting: number | "auto"): number {
+  if (setting !== "auto" && Number.isFinite(setting) && setting > 0) return setting;
+  if (state.calibrationTokens >= 64 && state.calibrationChars > 0) {
+    const ratio = state.calibrationChars / state.calibrationTokens;
+    // Clamp to the observed plausible band so one odd call cannot distort the HUD.
+    if (Number.isFinite(ratio) && ratio >= 1.5 && ratio <= 6) return ratio;
+  }
+  return 4;
+}
+
+/**
+ * Provider-reported output tokens, or undefined when the provider gave us none. Only a
+ * positive finite number counts: several providers send 0 while streaming.
+ */
+function reportedOutputTokens(call: CallStats): number | undefined {
+  const output = call.usage?.output;
+  return typeof output === "number" && Number.isFinite(output) && output > 0 ? output : undefined;
+}
+
+/**
+ * Fold a finished call into the session calibration. Called once per call, after the
+ * provider has reported its real token count.
+ */
+function calibrate(state: HudState, call: CallStats): void {
+  const real = reportedOutputTokens(call);
+  if (real === undefined || call.chars <= 0) return;
+  state.calibrationChars += call.chars;
+  state.calibrationTokens += real;
+}
+
+/**
+ * Retroactively make a finished call's throughput exact.
+ *
+ * The buckets are built from characters while the stream is flowing, because that is all
+ * that exists mid-flight. Once `usage.output` arrives it is authoritative, so rescale the
+ * already-flushed per-second samples by `real / estimated`. The call total then equals the
+ * provider's count exactly rather than being off by the character heuristic's error; only
+ * the *within-call* distribution keeps estimation error, which is unavoidable and much
+ * smaller than getting the total wrong.
+ *
+ * Buckets are divided by the divisor captured when they were written, so a mid-session
+ * recalibration cannot reinterpret their units.
+ */
+function correctCallTokens(state: HudState, call: CallStats): void {
+  const real = reportedOutputTokens(call);
+  if (real === undefined || call.chars <= 0 || call.tokensCorrected) return;
+  const estimated = call.chars / call.bucketDivisor;
+  if (!(estimated > 0)) return;
+  const factor = real / estimated;
+  if (!Number.isFinite(factor) || factor <= 0) return;
+  call.tokensCorrected = true;
+
+  // Only the seconds this call contributed, which are the last `flushedSeconds` entries
+  // pushed for it — unless the session cap has already evicted some, hence the clamp.
+  const count = Math.min(call.flushedSeconds, state.rateHistory.length);
+  const from = state.rateHistory.length - count;
+  for (let index = from; index < state.rateHistory.length; index++) {
+    state.rateHistory[index] *= factor;
+  }
+}
+
+/**
  * Session throughput history: one entry per completed writing second, across every call
- * in the session. It is never reset when a new response starts, so the RATE chart keeps
+ * in the session. It is never reset when a new response starts, so the TPS chart keeps
  * continuing instead of jumping back to empty.
  */
 function flushRateHistory(state: HudState, call: CallStats, d: Derived): void {
@@ -473,10 +614,15 @@ function flushRateHistory(state: HudState, call: CallStats, d: Derived): void {
   // While live, only wholly finished seconds are recorded; once the call is over the
   // final partial second is recorded too so no produced tokens are lost.
   const completed = Math.floor(elapsedMs / 1_000) + (call.live ? 0 : 1);
+  // Capture the divisor once per call: later buckets of the same call must use the same
+  // unit, and the retroactive correction divides by exactly this number.
+  if (call.bucketDivisor <= 0) call.bucketDivisor = resolveCharsPerToken(state, state.settings.charsPerToken);
   for (let second = call.flushedSeconds; second < completed; second++) {
-    state.rateHistory.push((call.rateBuckets[second] ?? 0) / 4);
+    state.rateHistory.push((call.rateBuckets[second] ?? 0) / call.bucketDivisor);
   }
   call.flushedSeconds = Math.max(call.flushedSeconds, completed);
+  // A finished call knows its real token count, so replace the estimate for good.
+  if (!call.live) correctCallTokens(state, call);
   const cap = 4_000;
   if (state.rateHistory.length > cap) state.rateHistory.splice(0, state.rateHistory.length - cap);
 }
@@ -592,6 +738,8 @@ interface Derived {
   requestStartPerf?: number;
   connectMs?: number;
   prefillMs?: number;
+  /** True when `prefillMs` is headers→first token, false when it is streamStart→first token. */
+  prefillIncludesConnect: boolean;
   ttftMs?: number;
   ttftTextMs?: number;
   ttoutMs?: number;
@@ -612,6 +760,11 @@ function derive(call: CallStats, now: number): Derived {
   const streamAnchor = headersPerf ?? call.streamPerf;
   const connectMs = headersPerf !== undefined && requestStartPerf !== undefined ? headersPerf - requestStartPerf : undefined;
   const prefillMs = call.firstTokenPerf !== undefined && streamAnchor !== undefined ? call.firstTokenPerf - streamAnchor : undefined;
+  // `prefillMs` covers headers→first token when headers arrived, but silently becomes
+  // streamStart→first token when they did not. An elapsed time is always `!== undefined`,
+  // so that fallback is indistinguishable by value alone — flag it so the two are never
+  // mislabelled, which matters now that the split is on the live HUD.
+  const prefillIncludesConnect = headersPerf !== undefined;
   const ttftMs = call.firstTokenPerf !== undefined && requestStartPerf !== undefined ? call.firstTokenPerf - requestStartPerf : undefined;
   const ttftTextMs = call.firstTextPerf !== undefined && requestStartPerf !== undefined ? call.firstTextPerf - requestStartPerf : undefined;
 
@@ -619,13 +772,18 @@ function derive(call: CallStats, now: number): Derived {
   const itlMeanMs = mean(call.gaps);
   const itlP95Ms = percentile(call.gaps, 0.95);
 
-  const outputTokens = call.usage?.output && call.usage.output > 0 ? call.usage.output : undefined;
+  const outputTokens = reportedOutputTokens(call);
   const estimatedTokens = outputTokens === undefined;
-  const tokens = outputTokens ?? Math.max(call.chunks, 0);
+  // Fall back to the calibrated character estimate, never to `chunks`: the number of
+  // streamed deltas is a batching artifact (some providers pack many tokens per delta),
+  // so using it as a token count produced a number that disagreed with the TPS chart.
+  const divisor = call.bucketDivisor > 0 ? call.bucketDivisor : 4;
+  const estimatedOutput = call.chars > 0 ? call.chars / divisor : undefined;
+  const tokens = outputTokens ?? estimatedOutput;
   const decodeMs = ttftMs !== undefined && ttoutMs !== undefined ? Math.max(1, ttoutMs - ttftMs) : undefined;
-  const tokensPerSecond = decodeMs !== undefined && tokens > 1 ? tokens / (decodeMs / 1_000) : undefined;
+  const tokensPerSecond = decodeMs !== undefined && tokens !== undefined && tokens > 1 ? tokens / (decodeMs / 1_000) : undefined;
 
-  return { requestStartPerf, connectMs, prefillMs, ttftMs, ttftTextMs, ttoutMs, itlMeanMs, itlP95Ms, decodeMs, tokensPerSecond, outputTokens, estimatedTokens };
+  return { requestStartPerf, connectMs, prefillMs, prefillIncludesConnect, ttftMs, ttftTextMs, ttoutMs, itlMeanMs, itlP95Ms, decodeMs, tokensPerSecond, outputTokens, estimatedTokens };
 }
 
 /* -------------------------------------------------------------------- widget */
@@ -686,9 +844,9 @@ function pressureBar(rate: number | undefined, cells: number, good: number, bad:
  *
  *   ○ waiting  ● writing  ‖ paused  ✔ done   [██████████░░]  ~38 tok/s  ~275 tok
  *
- * The pressure bar is a gauge for the "good baseline": it fills toward `rateGood`
- * (30 tok/s) and is green once there, brighter green at/above `rateFast` (100 tok/s),
- * amber between `rateBad` (15) and `rateGood`, and red below `rateBad`.
+ * The pressure bar is a gauge for the "good baseline": it fills toward `tpsGood`
+ * (30 tok/s) and is green once there, brighter green at/above `tpsFast` (100 tok/s),
+ * amber between `tpsBad` (15) and `tpsGood`, and red below `tpsBad`.
  */
 function renderStateRow(call: CallStats, state: HudState, d: Derived, now: number, theme: Theme): string {
   const recent = call.gaps.length >= 4 ? median(call.gaps.slice(-20)) : undefined;
@@ -707,17 +865,21 @@ function renderStateRow(call: CallStats, state: HudState, d: Derived, now: numbe
   // Below a quarter second the decode window is too short to be meaningful.
   const decodeSeconds = d.decodeMs !== undefined ? d.decodeMs / 1_000 : undefined;
   const measurable = decodeSeconds !== undefined && decodeSeconds >= 0.25;
-  const liveRate = measurable ? call.chars / 4 / decodeSeconds : undefined;
+  const divisor = call.bucketDivisor > 0 ? call.bucketDivisor : resolveCharsPerToken(state, state.settings.charsPerToken);
+  const liveRate = measurable ? call.chars / divisor / decodeSeconds : undefined;
+  // Once finished, prefer the provider's own number — the same figure the report and the
+  // corrected TPS chart use, so the three can no longer disagree.
   const rate = measurable ? (call.live ? liveRate : d.tokensPerSecond ?? liveRate) : undefined;
-  const tokens = call.usage?.output ?? (call.chars > 0 ? Math.round(call.chars / 4) : undefined);
+  const reported = reportedOutputTokens(call);
+  const tokens = reported ?? (call.chars > 0 ? Math.round(call.chars / divisor) : undefined);
 
   const segments: string[] = [stateStrip(active, theme, state.settings.colorMode)];
   // Pressure is a live signal: it falls back to empty once writing stops.
   const mode = state.settings.colorMode;
-  const { rateGood, rateBad, rateFast } = state.settings;
-  segments.push(pressureBar(call.live ? rate : undefined, 12, rateGood, rateBad, rateFast, theme, mode));
-  segments.push(rate !== undefined ? theme.style(`${call.live ? "~" : ""}${rate >= 100 ? rate.toFixed(0) : rate.toFixed(1)} tok/s`, { fg: severityColor(rateSeverity(rate, rateGood, rateBad, rateFast), theme, mode) }) : dim(theme, call.live ? "… tok/s" : "– tok/s"));
-  if (tokens !== undefined) segments.push(theme.fg("muted", `${call.live ? "~" : ""}${fmtTokens(tokens)} tok`));
+  const { tpsGood, tpsBad, tpsFast } = state.settings;
+  segments.push(pressureBar(call.live ? rate : undefined, 12, tpsGood, tpsBad, tpsFast, theme, mode));
+  segments.push(rate !== undefined ? theme.style(`${call.live ? "~" : ""}${rate >= 100 ? rate.toFixed(0) : rate.toFixed(1)} tok/s`, { fg: severityColor(rateSeverity(rate, tpsGood, tpsBad, tpsFast), theme, mode) }) : dim(theme, call.live ? "… tok/s" : "– tok/s"));
+  if (tokens !== undefined) segments.push(theme.fg("muted", `${call.live || reported === undefined ? "~" : ""}${fmtTokens(tokens)} tok`));
   if (stalled && sinceToken !== undefined) segments.push(theme.fg("error", `waiting ${fmtMs(sinceToken)}`));
 
   return segments.join(dim(theme, "  "));
@@ -733,21 +895,43 @@ function renderStateRow(call: CallStats, state: HudState, d: Derived, now: numbe
  * so the rate is deliberately NOT repeated here (two different figures called "avg rate"
  * was confusing).
  */
+/**
+ * Session latency figures across every call so far (the streaming one included).
+ *
+ * Median, not mean: latency has a long right tail (cold connections, provider
+ * queueing), so the mean is dragged by single outliers while the median describes the
+ * typical call. The HIST row and the severity colouring already key off the median, so
+ * using the mean here showed two different central tendencies for the same calls at the
+ * same time.
+ *
+ * The TPS average/p95 lives next to the TPS chart and is computed from per-second
+ * samples, so throughput is deliberately NOT repeated here (two different figures called
+ * "avg rate" was confusing). Throughput stays a mean there on purpose: a slow second is
+ * delivered throughput, not noise, and the median would flatter it.
+ */
 function renderStatsRow(state: HudState, theme: Theme): string {
   const now = performance.now();
   const calls = state.current ? [...state.calls, state.current] : state.calls;
 
-  const ttfts: number[] = [];
-  const itls: number[] = [];
-  for (const call of calls) {
-    const d = derive(call, now);
-    if (d.ttftMs !== undefined) ttfts.push(d.ttftMs);
-    if (d.itlMeanMs !== undefined) itls.push(d.itlMeanMs);
-  }
+  const derived = calls.map((call) => derive(call, now));
+  const pick = (values: (number | undefined)[]) => values.filter((value): value is number => value !== undefined);
+  const ttfts = pick(derived.map((d) => d.ttftMs));
+  const itls = pick(derived.map((d) => d.itlMeanMs));
+  const conns = pick(derived.map((d) => d.connectMs));
+  const prefills = pick(derived.map((d) => (d.prefillIncludesConnect ? d.prefillMs : undefined)));
 
   const segments: string[] = [dim(theme, "STATS")];
-  segments.push(theme.fg("text", `avg first ${fmtMs(mean(ttfts))}`));
-  segments.push(theme.fg("text", `avg ITL ${fmtMs(mean(itls))}`));
+
+  const connMedian = percentile(conns, 0.5);
+  const prefillMedian = percentile(prefills, 0.5);
+  if (prefills.length > 0 && connMedian !== undefined && prefillMedian !== undefined && connMedian + prefillMedian > 0) {
+    // Shares of TTFT, so the pair reads without needing a baseline: 86% conn is
+    // connection-bound, 86% prefill is server-bound.
+    const share = Math.round((connMedian / (connMedian + prefillMedian)) * 100);
+    segments.push(theme.fg("text", `split ${share}/${100 - share} conn/prefill`));
+  }
+  segments.push(theme.fg("text", `med first ${fmtMs(percentile(ttfts, 0.5))}`));
+  segments.push(theme.fg("text", `med ITL ${fmtMs(percentile(itls, 0.5))}`));
   segments.push(theme.fg("text", `p95 ITL ${fmtMs(percentile(itls, 0.95))}`));
   segments.push(theme.fg("text", `${calls.length} call${calls.length === 1 ? "" : "s"}`));
   const error = calls.find((call) => call.error);
@@ -910,31 +1094,31 @@ function renderNormalHud(state: HudState, call: CallStats, d: Derived, now: numb
 
   /* RATE graph */
   flushRateHistory(state, call, d);
-  const windowSeconds = Math.max(10, Math.round(settings.rateWindow));
+  const windowSeconds = Math.max(10, Math.round(settings.tpsWindow));
   const rateWidth = Math.max(20, width - 1);
-  const { max: rateMax, auto: rateMaxAuto } = resolveRateMax(state.rateHistory, settings.rateMax, settings.rateFast);
+  const { max: tpsMax, auto: tpsMaxAuto } = resolveRateMax(state.rateHistory, settings.tpsMax, settings.tpsFast);
   const rateColumns = settings.graphStyle === "braille" ? rateWidth * 2 : rateWidth;
   const rateTrace = buildSessionRateTrace(state, rateColumns, windowSeconds);
   const averageRate = mean(state.rateHistory);
   const p95Rate = percentile(state.rateHistory, 0.95);
   const rateLabels = [
-    "RATE tok/s",
+    "TPS tok/s",
     `${windowSeconds}s`,
-    `good ${settings.rateGood}`,
-    `bad ${settings.rateBad}`,
-    `fast ${settings.rateFast}`,
+    `good ${settings.tpsGood}`,
+    `bad ${settings.tpsBad}`,
+    `fast ${settings.tpsFast}`,
     averageRate !== undefined ? `avg ${Math.round(averageRate)}` : undefined,
     p95Rate !== undefined ? `p95 ${Math.round(p95Rate)}` : undefined,
     rateTrace.perColumnSeconds > 1.05 ? `${rateTrace.perColumnSeconds.toFixed(1)}s/col` : undefined,
   ]
     .filter((part): part is string => part !== undefined)
     .join("  ·  ");
-  lines.push(chartTitle(rateLabels, `max ${rateMax}${rateMaxAuto ? " auto" : ""}`, rateWidth, theme));
-  const rateColorOf = (value: number) => severityColor(rateSeverity(value, settings.rateGood, settings.rateBad, settings.rateFast), theme, mode);
-  const rateLines = [settings.rateBad, settings.rateGood, settings.rateFast].filter((value) => value < rateMax);
+  lines.push(chartTitle(rateLabels, `max ${tpsMax}${tpsMaxAuto ? " auto" : ""}`, rateWidth, theme));
+  const rateColorOf = (value: number) => severityColor(rateSeverity(value, settings.tpsGood, settings.tpsBad, settings.tpsFast), theme, mode);
+  const rateLines = [settings.tpsBad, settings.tpsGood, settings.tpsFast].filter((value) => value < tpsMax);
   const rateRows = settings.graphStyle === "braille"
-    ? renderBrailleChart(rateTrace.values, rateWidth, 5, rateMax, rateColorOf, theme, "right", rateLines)
-    : renderAreaChart(rateTrace.values, rateWidth, 5, rateMax, rateColorOf, theme, rateLines);
+    ? renderBrailleChart(rateTrace.values, rateWidth, 5, tpsMax, rateColorOf, theme, "right", rateLines)
+    : renderAreaChart(rateTrace.values, rateWidth, 5, tpsMax, rateColorOf, theme, rateLines);
   for (const row of rateRows) lines.push(row);
 
   lines.push(dim(theme, "─".repeat(Math.max(1, width))));
@@ -1000,8 +1184,8 @@ function renderHud(state: HudState, width: number, theme: Theme): string[] {
     // Record any newly finished seconds before drawing the session timeline.
     flushRateHistory(state, call, d);
 
-    const windowSeconds = Math.max(10, Math.round(settings.rateWindow));
-    const labelText = `RATE ${windowSeconds}s`;
+    const windowSeconds = Math.max(10, Math.round(settings.tpsWindow));
+    const labelText = `TPS ${windowSeconds}s`;
     const padded = (value: string) => value.padStart(6);
     const averageRate = mean(state.rateHistory);
     const p95Rate = percentile(state.rateHistory, 0.95);
@@ -1026,9 +1210,9 @@ function renderHud(state: HudState, width: number, theme: Theme): string[] {
     const statsRoom = Math.max(0, width - visibleWidth(labelText) - 3 - graphWidth);
     const statsLine = statsRoom > 0 ? truncateToWidth(statsText, statsRoom, "…") : "";
 
-    const { max: rateMax, auto: rateMaxAuto } = resolveRateMax(state.rateHistory, settings.rateMax, settings.rateFast);
-    const bars = sparklineRate(trace.values, [0, rateMax], settings.rateGood, settings.rateBad, settings.rateFast, theme, settings.colorMode);
-    lines.push(`${dim(theme, labelText)} ${bars}${rateMaxAuto ? `  ${dim(theme, `max ${rateMax}`)}` : ""}${statsLine ? `  ${dim(theme, statsLine)}` : ""}`);
+    const { max: tpsMax, auto: tpsMaxAuto } = resolveRateMax(state.rateHistory, settings.tpsMax, settings.tpsFast);
+    const bars = sparklineRate(trace.values, [0, tpsMax], settings.tpsGood, settings.tpsBad, settings.tpsFast, theme, settings.colorMode);
+    lines.push(`${dim(theme, labelText)} ${bars}${tpsMaxAuto ? `  ${dim(theme, `max ${tpsMax}`)}` : ""}${statsLine ? `  ${dim(theme, statsLine)}` : ""}`);
   }
 
   /* line 3 — session averages --------------------------------------------- */
@@ -1181,6 +1365,8 @@ export default function piMetrics(pi: ExtensionAPI): void {
     nextId: 1,
     turnIndex: 0,
     rateHistory: [],
+    calibrationChars: 0,
+    calibrationTokens: 0,
   };
 
   let tui: TUI | undefined;
@@ -1301,7 +1487,17 @@ export default function piMetrics(pi: ExtensionAPI): void {
         for (const entry of ctx.sessionManager.getBranch()) {
           if (entry.type !== "custom" || entry.customType !== CUSTOM_TYPE) continue;
           const data = entry.data as MetricsEntryData | undefined;
-          if (data?.kind === "call") restored.push({ ...data.call, flushedSeconds: data.call.flushedSeconds ?? 0, live: false });
+          if (data?.kind === "call")
+            restored.push({
+              ...data.call,
+              flushedSeconds: data.call.flushedSeconds ?? 0,
+              // Written by a version that used a fixed 4, so label its buckets correctly.
+              bucketDivisor: data.call.bucketDivisor ?? 4,
+              // A restored call's seconds were never replayed into rateHistory, so its
+              // buckets must not be corrected again.
+              tokensCorrected: true,
+              live: false,
+            });
         }
       } catch {
         // Older session files or unexpected shapes: start with an empty timeline.
@@ -1367,6 +1563,8 @@ export default function piMetrics(pi: ExtensionAPI): void {
       gapKinds: [],
       rateBuckets: [],
       flushedSeconds: 0,
+      bucketDivisor: resolveCharsPerToken(state, state.settings.charsPerToken),
+      tokensCorrected: false,
       chunks: 0,
       chars: 0,
       aborted: false,
@@ -1447,6 +1645,8 @@ export default function piMetrics(pi: ExtensionAPI): void {
         gapKinds: [],
         rateBuckets: [],
         flushedSeconds: 0,
+        bucketDivisor: 0,
+        tokensCorrected: false,
         chunks: 0,
         chars: 0,
         aborted: false,
@@ -1461,6 +1661,14 @@ export default function piMetrics(pi: ExtensionAPI): void {
     call.error = message.stopReason === "error" ? message.errorMessage ?? "provider error" : undefined;
     call.live = false;
     state.current = undefined;
+    // The provider's own token count is authoritative: fold it into the session
+    // calibration so later calls estimate better.
+    calibrate(state, call);
+    // NOTE: the TPS buckets are corrected inside flushRateHistory, not here. Ordering
+    // matters: a finished call still has a final partial second that is only pushed on
+    // the next flush, so correcting now would rescale the whole seconds and then let
+    // that last bucket through uncorrected — leaving the call total inexact. The flush
+    // path pushes every remaining bucket first and corrects once afterwards.
 
     if (call.firstTokenPerf === undefined && call.durationMs === undefined) {
       // Nothing useful to show (e.g. an immediately failed request).

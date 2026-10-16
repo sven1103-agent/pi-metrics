@@ -55,6 +55,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "node scripts/smoke.mjs && node scripts/tokens.test.mjs && node scripts/tps-accuracy.test.mjs && node scripts/settings-alias.test.mjs",
     "smoke": "node scripts/smoke.mjs"
   }
 }
