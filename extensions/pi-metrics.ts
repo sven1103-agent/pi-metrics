@@ -39,11 +39,13 @@
  *   ✔ done      the call finished; the values freeze
  *
  * The pressure bar is throughput against the TPS scale (full at the `good` baseline).
- * Colour has four bands, keyed to `tpsFast` (100), `tpsGood` (30) and
- * `tpsBad` (15): green at/above `tpsGood` (a brighter green at `tpsFast`), amber
- * between `tpsGood` and `tpsBad`, and red below `tpsBad`. The bar empties once
- * writing stops. Those thresholds are deliberately *not* printed: they are configuration,
- * not measurement, and the colour already encodes them. `fast` is the exception, because
+ * Colour is one cool-to-hot hue ramp over four anchors, keyed to `tpsFast` (100),
+ * `tpsGood` (30) and `tpsBad` (15): teal at `tpsFast`, green at `tpsGood`, amber at
+ * `tpsBad`, red below it. Hue moves monotonically (~195° → ~150° → 85° → 25°) so no hue
+ * is crossed twice, and every step is interpolated in Oklch rather than RGB, so the midtones
+ * stay saturated instead of passing through grey. The bar empties once writing stops. Those
+ * thresholds are deliberately *not* printed: they are configuration, not measurement, and
+ * the colour already encodes them. `fast` is the exception, because
  * it also floors the auto axis maximum, so the title keeps it to explain `max … auto`.
  *
  * Row 1 ends its metrics with where they came from: `(usage)` when the provider reported
@@ -484,27 +486,41 @@ function shortModel(model: string): string {
 }
 
 /**
- * Colour a latency value against the session median: at/below the median is green, 2x is
- * amber and 3x or worse is red. Provider-independent — it never needs a per-model scale.
+ * Severity of a latency value against the session median. The scale is symmetric in the
+ * *ratio* to the median, so both directions saturate at the same multiplicative distance:
+ *
+ *   median/3   median/2   median   2x median   3x median
+ *   -1         -0.5       0        +0.5        +1
+ *   teal       cool       green    amber       red
+ *
+ * Provider-independent: it never needs a per-model scale. The below-median half used to be
+ * clamped to 0, which made "at or below the median" one flat green and left the cool end of
+ * the ramp unreachable — the histogram charts could never show a hue gradient, only the TPS
+ * chart could.
  */
 function latencySeverity(value: number, medianValue: number | undefined): number {
-  if (medianValue === undefined || !(medianValue > 0)) return 0;
-  return clamp01((value / medianValue - 1) / 2); // 1x median = 0, 3x = 1
+  if (medianValue === undefined || !(medianValue > 0) || !(value > 0)) return 0;
+  const ratio = value / medianValue;
+  const severity = ratio >= 1 ? (ratio - 1) / 2 : -(1 / ratio - 1) / 2;
+  return severity < -1 ? -1 : severity > 1 ? 1 : severity;
 }
 
 const BLOCKS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 
 /**
- * Throughput colour, defined by four *hue-stable* anchors so that severity reads as
- * red -> amber -> green in one direction:
+ * Throughput colour: one cool-to-hot ramp over four anchors, ordered so severity reads in
+ * a single direction:
  *
- *   fast (-1)      good (0)      ok (+0.5)     bad (+1)
- *   success full   success muted warning       error full
+ *   fast (-1)      good (0)       ok (+0.5)    bad (+1)
+ *   teal           success muted  warning      error full
  *
- * Saturation is the only variable inside a hue, so no interpolation can rotate the
- * colour. Earlier this mixed every anchor toward `dim` in Oklch, which sent `success`
- * (hue 148) past green into cyan and `warning` (hue 40) to 117 — i.e. the warning band
- * rendered *greener* than the healthy one and the ramp crossed hues in the wrong order.
+ * Hue moves monotonically along the ramp (teal -> green -> amber -> red) and every step is
+ * interpolated in Oklch, so the midtones stay saturated instead of passing through grey.
+ * `fast` is the one anchor the theme does not supply — see `FAST_HUE`. An earlier version
+ * mixed every anchor toward `dim` in Oklch, which sent `success` (hue 148) past green into
+ * cyan and `warning` (hue 40) to 117: the warning band rendered *greener* than the healthy
+ * one and the ramp crossed hues in the wrong order. This ramp is monotone by construction
+ * (~195 -> ~150 -> 85 -> 25), which is what makes the hue readable as a gradient.
  */
 type ColorMode = "calm" | "vivid" | "mono";
 
@@ -518,7 +534,16 @@ function tint(color: Color, satScale: number): Color {
   return okhslColor(h, clamp01(s * satScale), l);
 }
 
-/** Four hue-stable anchors; `severityColor` interpolates strictly *within* each pair. */
+/** Re-hue a colour, keeping the theme's own saturation and lightness. */
+function withHue(color: Color, hue: number): Color {
+  const { s, l } = colorToOkhsl(color);
+  return okhslColor(hue, s, l);
+}
+
+/**
+ * Four anchors on one cool-to-hot ramp. `severityColor` interpolates strictly *within* each
+ * adjacent pair, and the anchors are ordered so hue only ever moves one way.
+ */
 interface Ramp {
   fast: Color;
   good: Color;
@@ -526,8 +551,17 @@ interface Ramp {
   bad: Color;
 }
 
+/**
+ * Hue of the `fast` anchor, shared by both colour modes. It is deliberately *cool*: without
+ * it the whole healthy half of the ramp is one green, with only saturation varying, so a
+ * fast provider renders as a flat green slab. Every other anchor keeps a hue the theme (or
+ * the vivid table) already supplies; `fast` is the one that has to move for the ramp to be
+ * a gradient. Chosen so the sequence stays monotone: 195 -> ~150 -> 85 -> 25.
+ */
+const FAST_HUE = 195; // teal / cyan
+
 /** Vivid ramp anchors, hand-picked (excellent -> good -> mid -> bad). */
-const VIVID_FAST = { hue: 150, sat: 0.85, light: 0.62 };
+const VIVID_FAST = { hue: FAST_HUE, sat: 0.8, light: 0.66 };
 const VIVID_GOOD = { hue: 145, sat: 0.62, light: 0.64 };
 const VIVID_OK = { hue: 85, sat: 0.95, light: 0.68 };
 const VIVID_BAD = { hue: 25, sat: 0.95, light: 0.6 };
@@ -550,9 +584,10 @@ function rampFor(theme: Theme, mode: ColorMode): Ramp {
       bad: okhslColor(VIVID_BAD.hue, VIVID_BAD.sat, VIVID_BAD.light),
     };
   }
-  // calm: the theme's own semantics, desaturated but never hue-shifted.
+  // calm: the theme's own semantics, desaturated, and hue-shifted *only* at `fast` (see
+  // FAST_HUE) — that one cool anchor is what turns the healthy half into a gradient.
   return {
-    fast: tint(theme.colors.success, 1.0),
+    fast: withHue(tint(theme.colors.success, 1.0), FAST_HUE),
     good: tint(theme.colors.success, 0.55),
     ok: tint(theme.colors.warning, 0.7),
     bad: tint(theme.colors.error, 1.0),
@@ -561,7 +596,11 @@ function rampFor(theme: Theme, mode: ColorMode): Ramp {
 
 /**
  * One palette for everything, keyed by *severity*: -1 = very healthy, +1 = bad.
- * Colour is reserved for deviations, so a session where everything is fine stays quiet.
+ *
+ * Hue carries the value continuously across the whole ramp, so the reading does not depend
+ * on comparing bar heights. Each mode's *muted* end is its `good` anchor — the baseline — so
+ * a session that never gets near `fast` or `bad` still renders near the theme's own quiet
+ * green rather than a full-spectrum rainbow.
  */
 function severityColor(severity: number, theme: Theme, mode: ColorMode): Color {
   const t = Math.max(-1, Math.min(1, severity));

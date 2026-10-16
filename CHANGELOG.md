@@ -28,6 +28,18 @@ rename of them:
 - `tpsFast` is the only threshold printed. `tpsGood` / `tpsBad` colour the HUD but are
   configuration, not measurement, and printing them invited reading them as results.
   The recording window and the chart ceiling now sit together on the right of the title.
+- Colour is one cool-to-hot hue ramp, not four bands. The `fast` anchor sits at teal (195°)
+  instead of green, so the healthy half is a hue sweep rather than a single green with only
+  saturation varying — a fast provider used to render as a flat green slab. Anchors stay
+  monotone (~195° → ~150° → 85° → 25°) and are mixed in Oklch, not RGB, so the midtones stay
+  saturated instead of passing through grey. `calm` keeps the theme's green/amber/red and
+  hue-shifts only `fast`; `vivid` uses the full hand-picked set; `mono` still has no hue.
+- The latency ramp is symmetric in the ratio to the median, so the cool end is reachable at
+  all. `latencySeverity` clamped to `[0, 1]`, which made *every* latency at or below the
+  session median the same green: 3× the median was red, but a tenth of it was no cooler than
+  the median, and the new `fast` anchor changed nothing for the histogram charts. It is now
+  `-1` at a third of the median and `+1` at 3×, saturating at the same multiplicative distance
+  in both directions. `scripts/color-ramp.test.mjs` pins the order.
 - The chart title protects the axis under truncation: on a narrow terminal the stats give
   way, not the scale.
 - `placement` works as documented. Pi compares the value against `belowEditor` exactly and
