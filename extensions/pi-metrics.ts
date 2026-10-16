@@ -80,11 +80,19 @@
  * excluded, so the newest column does not flicker).
  *
  * Commands
- *   /metrics                 toggle the HUD on/off
- *   /metrics on | off        explicit toggle
- *   /metrics report          append a table of the recent calls to the transcript
- *   /metrics reset           forget the calls recorded in this session
- *   /metrics placement above | below
+ *   /metrics                       toggle the HUD on/off
+ *   /metrics on | off              explicit toggle
+ *   /metrics report                append a table of the recent calls to the transcript
+ *   /metrics reset                 forget the calls recorded in this session
+ *   /metrics placement above|below
+ *   /metrics style compact|normal
+ *   /metrics graph braille|block
+ *   /metrics color calm|vivid|mono
+ *
+ * The display commands change the running HUD immediately and hold until Pi exits, and
+ * each one prints the settings.json line that makes it permanent. They cannot write the
+ * file themselves: Pi's extension API has no settings-write call, and reaching for the
+ * path directly would race Pi's own settings manager and could drop unrelated keys.
  *
  * Settings (`~/.pi/agent/settings.json`, key `pi-metrics`, all optional):
  *   {
@@ -110,6 +118,12 @@
  *
  * The `rateWindow`/`rateMax`/`rateGood`/`rateBad`/`rateFast` spellings from before 0.1.0
  * are still read as aliases and never written back.
+ *
+ * Every setting is validated, and a bad value is reported rather than ignored. That
+ * matters because Pi accepts only the exact string "belowEditor" and silently falls back
+ * to above-the-editor for anything else, so `"placement": "below"` used to leave the HUD
+ * stubbornly in place with no indication why. Both spellings are now accepted, and a value
+ * that is wrong in some other way produces a warning instead of quiet degradation.
  */
 
 import { appendFileSync } from "node:fs";
@@ -206,7 +220,38 @@ const LEGACY_SETTING_ALIASES: Record<string, keyof MetricsSettings> = {
   rateFast: "tpsFast",
 };
 
-function readSettings(pi: ExtensionAPI): ResolvedSettings {
+/**
+ * Accepted spellings for `placement`. Pi itself compares against the exact string
+ * `"belowEditor"` and treats everything else as above-the-editor, so a natural
+ * `"placement": "below"` is ignored with no error — which reads as "the setting does
+ * nothing". Both spellings are translated here, matching what the command documents.
+ */
+const PLACEMENT_SPELLINGS: Record<string, "aboveEditor" | "belowEditor"> = {
+  aboveeditor: "aboveEditor",
+  above: "aboveEditor",
+  beloweditor: "belowEditor",
+  below: "belowEditor",
+};
+
+const STYLE_VALUES = ["compact", "normal"] as const;
+const GRAPH_VALUES = ["braille", "block"] as const;
+const COLOR_VALUES = ["calm", "vivid", "mono"] as const;
+
+function normalizePlacement(value: unknown): "aboveEditor" | "belowEditor" | undefined {
+  return typeof value === "string" ? PLACEMENT_SPELLINGS[value.toLowerCase()] : undefined;
+}
+
+function normalizeEnum<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : undefined;
+}
+
+interface ReadSettingsResult {
+  settings: ResolvedSettings;
+  /** Human-readable complaints about values that were present but unusable. */
+  problems: string[];
+}
+
+function readSettings(pi: ExtensionAPI): ReadSettingsResult {
   let raw: unknown;
   try {
     raw = (pi.getSettings() as unknown as Record<string, unknown>)["pi-metrics"];
@@ -214,6 +259,7 @@ function readSettings(pi: ExtensionAPI): ResolvedSettings {
     raw = undefined;
   }
   const merged = { ...DEFAULTS };
+  const problems: string[] = [];
   if (raw && typeof raw === "object") {
     const source = raw as Record<string, unknown>;
     for (const [key, value] of Object.entries(source)) {
@@ -226,8 +272,35 @@ function readSettings(pi: ExtensionAPI): ResolvedSettings {
       if (source[legacy] === undefined || source[current] !== undefined) continue;
       (merged as Record<string, unknown>)[current] = source[legacy];
     }
+
+    // Reject unusable values loudly. Quietly substituting the default is what made the
+    // placement bug invisible: the HUD stayed put and nothing said why.
+    const invalid = (key: keyof MetricsSettings, allowed: string, fallback: unknown): void => {
+      problems.push(
+        `pi-metrics: "${key}" must be ${allowed} — ignoring ${JSON.stringify((merged as Record<string, unknown>)[key])}`,
+      );
+      // Reset to the default as well as warning: leaving the bad value in place would let it
+      // reach Pi, which silently interprets anything unrecognised as its own default.
+      (merged as Record<string, unknown>)[key] = fallback;
+    };
+
+    const placement = normalizePlacement(merged.placement);
+    if (placement === undefined) invalid("placement", '"aboveEditor" or "belowEditor"', DEFAULTS.placement);
+    else merged.placement = placement;
+
+    const style = normalizeEnum(merged.style, STYLE_VALUES);
+    if (style === undefined) invalid("style", `one of ${STYLE_VALUES.join(", ")}`, DEFAULTS.style);
+    else merged.style = style;
+
+    const graphStyle = normalizeEnum(merged.graphStyle, GRAPH_VALUES);
+    if (graphStyle === undefined) invalid("graphStyle", `one of ${GRAPH_VALUES.join(", ")}`, DEFAULTS.graphStyle);
+    else merged.graphStyle = graphStyle;
+
+    const colorMode = normalizeEnum(merged.colorMode, COLOR_VALUES);
+    if (colorMode === undefined) invalid("colorMode", `one of ${COLOR_VALUES.join(", ")}`, DEFAULTS.colorMode);
+    else merged.colorMode = colorMode;
   }
-  return merged;
+  return { settings: merged, problems };
 }
 
 /* --------------------------------------------------------------------- state */
@@ -1334,7 +1407,7 @@ interface ReportRow {
   medianTtft?: number;
 }
 
-function buildReportRows(calls: CallStats[]): ReportRow[] {
+function buildReportRows(calls: CallStats[], includeCost: boolean): ReportRow[] {
   const now = performance.now();
   const medianTtft = percentile(
     calls.map((call) => derive(call, now).ttftMs).filter((value): value is number => value !== undefined),
@@ -1355,7 +1428,7 @@ function buildReportRows(calls: CallStats[]): ReportRow[] {
       // fall back to `call.chunks`: the number of streamed deltas is a batching artifact,
       // so some providers would report a wildly different figure here than in the chart.
       out: d.estimatedTokens ? `~${fmtTokens(d.estimatedOutput)}` : fmtTokens(d.outputTokens),
-      cost: fmtCost(call.usage?.cost?.total, true) ?? "–",
+      cost: includeCost ? fmtCost(call.usage?.cost?.total, true) ?? "–" : "–",
       status: call.error ? (call.aborted ? "abort" : "error") : "ok",
       ttftMs: d.ttftMs,
       itlMs: d.itlMeanMs,
@@ -1366,8 +1439,11 @@ function buildReportRows(calls: CallStats[]): ReportRow[] {
 
 function renderReport(rows: ReportRow[], settings: ResolvedSettings, theme: Theme): string[] {
   const medianRowItl = percentile(rows.map((row) => row.itlMs).filter((value): value is number => value !== undefined), 0.5);
-  const headers = ["time", "turn", "model", "TTFT", "conn/pre", "ITL", "tok/s", "TTOUT", "out", "cost", ""];
-  const keys: (keyof ReportRow)[] = ["time", "turn", "model", "ttft", "conn", "itl", "tps", "ttout", "out", "cost", "status"];
+  // Drop the cost column entirely when the setting is off, rather than printing a column
+  // of dashes: the setting is advertised as "show cost", and a blank column is not that.
+  const showCost = settings.cost;
+  const headers = ["time", "turn", "model", "TTFT", "conn/pre", "ITL", "tok/s", "TTOUT", "out", ...(showCost ? ["cost"] : []), ""];
+  const keys: (keyof ReportRow)[] = ["time", "turn", "model", "ttft", "conn", "itl", "tps", "ttout", "out", ...(showCost ? (["cost"] as const) : []), "status"];
   const widths = headers.map((header, index) => Math.max(visibleWidth(header), ...rows.map((row) => visibleWidth(String(row[keys[index]])))));
 
   const lines: string[] = [];
@@ -1396,8 +1472,10 @@ function summarizeCall(call: CallStats, settings: ResolvedSettings, theme: Theme
     theme.style(`TTFT ${fmtMs(d.ttftMs)}`, { fg: severityColor(latencySeverity(d.ttftMs ?? 0, medianTtft), theme, settings.colorMode) }),
     theme.style(`ITL ${fmtMs(d.itlMeanMs)}`, { fg: severityColor(latencySeverity(d.itlMeanMs ?? 0, medianItl), theme, settings.colorMode) }),
     theme.fg("text", `TTOUT ${fmtMs(d.ttoutMs)}`),
-    theme.fg("muted", `out ${fmtTokens(call.usage?.output ?? call.chunks)}`),
+    theme.fg("muted", `out ${fmtTokens(d.estimatedTokens ? d.estimatedOutput : d.outputTokens)}`),
   ];
+  const cost = settings.cost ? fmtCost(call.usage?.cost?.total, true) : undefined;
+  if (cost) parts.push(theme.fg("muted", cost));
   if (call.error) parts.push(theme.fg("error", call.aborted ? "aborted" : "error"));
   return parts.join(dim(theme, "  "));
 }
@@ -1528,10 +1606,17 @@ export default function piMetrics(pi: ExtensionAPI): void {
   /* --------------------------------------------------------- event handling */
 
   pi.on("session_start", (_event, ctx) => {
-    state.settings = readSettings(pi);
-    state.visible = state.settings.enabled;
+    const { settings, problems } = readSettings(pi);
+    state.settings = settings;
+    state.visible = settings.enabled;
     state.current = undefined;
     state.rateHistory = [];
+    // Surface unusable config instead of silently substituting the default. Pi validates
+    // `settings.json` but not an extension's own nested keys, so this is the only place a
+    // typo inside `pi-metrics` can be reported.
+    for (const problem of problems) {
+      ctx.ui.notify(problem, "warning");
+    }
 
     // Rebuild history from persisted cards so a resumed session keeps its timeline.
     if (state.settings.persist) {
@@ -1747,12 +1832,39 @@ export default function piMetrics(pi: ExtensionAPI): void {
   pi.registerCommand("metrics", {
     description: "Show, toggle or reset the LLM latency HUD",
     getArgumentCompletions: (prefix) => {
-      const candidates = ["on", "off", "report", "reset", "placement above", "placement below"];
+      const candidates = [
+        "on",
+        "off",
+        "report",
+        "reset",
+        "placement above",
+        "placement below",
+        "style compact",
+        "style normal",
+        "graph braille",
+        "graph block",
+        "color calm",
+        "color vivid",
+        "color mono",
+      ];
       const matches = candidates.filter((candidate) => candidate.startsWith(prefix));
       return matches.length > 0 ? matches.map((value) => ({ value, label: value })) : null;
     },
     handler: async (args, ctx) => {
       const [command, argument] = args.trim().split(/\s+/, 2);
+      // A display change applies now and is reported with the settings.json line that makes
+      // it permanent. Persisting would need a settings write, which Pi's extension API does
+      // not offer; writing the file directly would race Pi's settings manager and could drop
+      // unrelated keys.
+      const applied = (summary: string, settingsKey: string, value: string): void => {
+        attachWidget(ctx);
+        touch(ctx, true);
+        ctx.ui.notify(`${summary} — persist with "pi-metrics": { "${settingsKey}": "${value}" }`, "info");
+      };
+      const choose = <T extends string>(allowed: readonly T[], value: string | undefined): T | undefined => {
+        if (value === undefined) return undefined;
+        return allowed.find((candidate) => candidate.toLowerCase() === value.toLowerCase());
+      };
 
       switch (command) {
         case "on":
@@ -1764,11 +1876,45 @@ export default function piMetrics(pi: ExtensionAPI): void {
           return;
         }
         case "placement": {
-          const placement = argument === "below" ? "belowEditor" : "aboveEditor";
+          const placement = normalizePlacement(argument);
+          if (placement === undefined) {
+            ctx.ui.notify("/metrics placement above|below", "warning");
+            return;
+          }
           state.settings.placement = placement;
-          attachWidget(ctx);
-          touch(ctx, true);
-          ctx.ui.notify(`metrics HUD placed ${placement}`, "info");
+          applied(`metrics HUD placed ${placement}`, "placement", placement);
+          return;
+        }
+        case "style": {
+          const style = choose(STYLE_VALUES, argument);
+          if (style === undefined) {
+            ctx.ui.notify("/metrics style compact|normal", "warning");
+            return;
+          }
+          state.settings.style = style;
+          applied(`metrics style ${style}`, "style", style);
+          return;
+        }
+        case "graph":
+        case "graphStyle": {
+          const graphStyle = choose(GRAPH_VALUES, argument);
+          if (graphStyle === undefined) {
+            ctx.ui.notify("/metrics graph braille|block", "warning");
+            return;
+          }
+          state.settings.graphStyle = graphStyle;
+          applied(`metrics graph ${graphStyle}`, "graphStyle", graphStyle);
+          return;
+        }
+        case "color":
+        case "colorMode": {
+          const colorMode = choose(COLOR_VALUES, argument);
+          if (colorMode === undefined) {
+            ctx.ui.notify("/metrics color calm|vivid|mono", "warning");
+            return;
+          }
+          state.settings.colorMode = colorMode;
+          applied(`metrics color ${colorMode}`, "colorMode", colorMode);
           return;
         }
         case "reset": {
@@ -1789,11 +1935,18 @@ export default function piMetrics(pi: ExtensionAPI): void {
           pi.appendEntry(CUSTOM_TYPE, { kind: "report", calls: calls.map(serialize), generatedAt: Date.now() } satisfies MetricsEntryData);
           return;
         }
-        default: {
+        case "":
+        case undefined: {
           state.visible = !state.visible;
           attachWidget(ctx);
           touch(ctx, true);
           ctx.ui.notify(`metrics HUD ${state.visible ? "enabled" : "disabled"}`, "info");
+          return;
+        }
+        default: {
+          // An unrecognised subcommand used to fall through to the toggle, so a typo like
+          // `/metrics styel compact` silently switched the HUD off. Say so instead.
+          ctx.ui.notify(`unknown option "${command}" — try on, off, report, reset, placement, style, graph or color`, "warning");
           return;
         }
       }
@@ -1817,7 +1970,7 @@ export default function piMetrics(pi: ExtensionAPI): void {
       return new Text(summarizeCall(call, state.settings, theme, percentile(ttfts, 0.5), percentile(itls, 0.5)), 1, 0);
     }
     const calls = data.calls.map((call) => ({ ...call, live: false } as CallStats));
-    const rows = buildReportRows(calls);
+    const rows = buildReportRows(calls, state.settings.cost);
     return new Text(renderReport(rows, state.settings, theme).join("\n"), 1, 0);
   });
 }

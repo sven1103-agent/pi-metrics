@@ -35,6 +35,14 @@ pi install git:github.com/sven1103-agent/pi-metrics@v0.1.0
 | `/metrics report` | append a table of recent calls to the transcript |
 | `/metrics reset` | forget the calls recorded in this session |
 | `/metrics placement above` · `below` | move the panel |
+| `/metrics style compact` · `normal` | four lines, or multi-row graphs |
+| `/metrics graph braille` · `block` | graph glyphs |
+| `/metrics color calm` · `vivid` · `mono` | colour intensity |
+
+Display commands take effect immediately and last until Pi exits. Each one prints the
+`settings.json` line that makes the change permanent — the extension cannot write that file
+itself, because Pi's extension API exposes no settings-write call, and editing the file
+underneath Pi's settings manager risks dropping unrelated keys.
 
 ## Settings
 
@@ -67,7 +75,13 @@ All optional, under the `pi-metrics` key in `~/.pi/agent/settings.json`:
 `braille` or `block`. `colorMode` is `calm`, `vivid` or `mono`. `tpsMax` is a fixed tok/s
 ceiling or `auto` (session p98, never below `tpsFast`). `charsPerToken` is `auto`
 (calibrate from this session) or a fixed characters-per-token divisor. `persist` appends a
-one-line card per call to the transcript.
+one-line card per call to the transcript. `cost` controls the cost column in `/metrics
+report` and on the persisted card.
+
+`placement` accepts `aboveEditor` / `belowEditor` and, because a natural guess is otherwise
+silently ignored, also `above` / `below`. A value that is unusable in any other way is
+reported at startup as a warning *and* replaced by the default, so a typo cannot degrade
+the HUD quietly.
 
 The pre-0.1.0 names `rateWindow` / `rateMax` / `rateGood` / `rateBad` / `rateFast` are
 still read as aliases, so an existing config keeps working. When both a legacy and a new
