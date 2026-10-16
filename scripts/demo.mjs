@@ -39,11 +39,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 /* ------------------------------------------------------------------- options */
 
 const MODES = {
-  // A 30s window, not the 120s default: the demo is ~25s long, so a 120s axis would leave the
-  // chart 80% empty and read as broken. Filling most of the axis shows the shape of a session.
-  braille: { style: "normal", graphStyle: "braille", tpsWindow: 30 },
-  block: { style: "normal", graphStyle: "block", tpsWindow: 30 },
-  compact: { style: "compact", graphStyle: "braille", tpsWindow: 30 },
+  // The window matches the demo's length rather than sitting at the 120s default: a window
+  // several times longer than the session leaves most of the chart empty, which reads as a
+  // broken graph instead of an idle one. A little headroom keeps the fill visibly bounded.
+  braille: { style: "normal", graphStyle: "braille", tpsWindow: 20 },
+  block: { style: "normal", graphStyle: "block", tpsWindow: 20 },
+  compact: { style: "compact", graphStyle: "braille", tpsWindow: 20 },
 };
 
 const argv = process.argv.slice(2);
@@ -58,6 +59,8 @@ const DUMP_ALL = argv.includes("--dump=all");
 const MARKDOWN = argv.includes("--markdown");
 /** Emit the frame quoted in the source file's header docblock, ` *   `-prefixed. */
 const SOURCE_FRAME = argv.includes("--source-frame");
+/** Emit the timing plan as JSON, so a test can assert the playback pacing. */
+const TIMING = argv.includes("--timing");
 
 /** Render width. Overridable so a documentation comment can quote a narrower frame. */
 const widthArg = argv.find((arg) => arg.startsWith("--width="));
@@ -65,12 +68,18 @@ const WIDTH = Number(widthArg ? widthArg.slice("--width=".length) : process.env.
 /** Virtual milliseconds per rendered frame. 100ms gives 10 frames per TPS column. */
 const FRAME_MS = 100;
 /**
- * Real milliseconds to wait per frame. Faster than the virtual step so the GIF stays short,
- * which is safe because the HUD only ever reads the virtual clock.
+ * Real milliseconds to wait per frame. Defaults to FRAME_MS, i.e. the demo plays at real
+ * time: one virtual second per real second, which is what a user actually experiences.
+ *
+ * There used to be a second speed factor downstream (`agg --speed`), and because the two
+ * multiplied, the recording ended up ~6x real time. At that rate a single TPS column was
+ * drawn in ~25ms and the chart read as a strobing/blinking panel rather than an instrument.
+ * Any speed-up belongs in exactly one place — prefer leaving this alone and using
+ * `--speed` at encode time, never both.
  */
-const REAL_FRAME_MS = Number(process.env.DEMO_FRAME_MS ?? 40);
+const REAL_FRAME_MS = Number(process.env.DEMO_FRAME_MS ?? FRAME_MS);
 /** Hold the finished HUD so the last frame is readable before the loop restarts. */
-const HOLD_MS = 1_800;
+const HOLD_MS = 1_500;
 
 /* -------------------------------------------------------------- virtual clock */
 
@@ -101,18 +110,22 @@ const CALLS = [
   // Throughput is roughly 1000/itl (decode time is ~tokens x itl), so the inter-token gaps
   // below walk the colour ramp: bright green, plain green, amber, a genuinely slow red, then a
   // recovery. A demo where every second were the same shade would prove nothing about the
-  // colouring. Token counts are kept small so the whole loop stays short enough to read — a
-  // long GIF is a GIF nobody watches to the end.
-  { connect: 140, prefill: 320, tokens: 150, itl: 12, input: 1_240 }, //  ~83 tok/s  bright green
-  { connect: 90, prefill: 180, tokens: 110, itl: 22, input: 1_380 }, //  ~45 tok/s  green
+  // colouring.
+  //
+  // Token counts are deliberately modest. Because throughput depends only on `itl`, shrinking
+  // the counts keeps the colour bands identical while shortening each call — and the whole
+  // animation now plays at real time (see REAL_FRAME_MS), so every virtual second here is a
+  // real second of the viewer's attention. A 22s loop is a loop nobody finishes.
+  { connect: 140, prefill: 320, tokens: 90, itl: 12, input: 1_240 }, //  ~83 tok/s  bright green
+  { connect: 90, prefill: 180, tokens: 70, itl: 22, input: 1_380 }, //  ~45 tok/s  green
   // Stalls part-way, so the `‖ paused` state is visible.
-  { connect: 110, prefill: 260, tokens: 80, itl: 40, input: 1_520, stallAfter: 40, stallMs: 1_100 }, // amber
-  { connect: 130, prefill: 420, tokens: 60, itl: 75, input: 1_610 }, //  ~13 tok/s  red
-  { connect: 80, prefill: 200, tokens: 120, itl: 15, input: 1_740 }, //  ~66 tok/s  green
+  { connect: 110, prefill: 260, tokens: 55, itl: 40, input: 1_520, stallAfter: 30, stallMs: 900 }, // amber
+  { connect: 130, prefill: 420, tokens: 40, itl: 75, input: 1_610 }, //  ~13 tok/s  red
+  { connect: 80, prefill: 200, tokens: 80, itl: 15, input: 1_740 }, //  ~66 tok/s  green
 ];
-const IDLE_AT_START_MS = 1_200;
+const IDLE_AT_START_MS = 700;
 /** Pause between calls, so the boundary between writing actions is visible in the chart. */
-const BETWEEN_CALLS_MS = 400;
+const BETWEEN_CALLS_MS = 250;
 
 /* ----------------------------------------------------------------------- boot */
 
@@ -220,6 +233,30 @@ for (const [callIndex, call] of CALLS.entries()) {
 
 const totalVirtualMs = cursor + HOLD_MS;
 actions.sort((a, b) => a.at - b.at);
+
+if (TIMING) {
+  // Reported rather than asserted here: this file only knows the demo's own pacing. The
+  // real-time claim is a property of the *recording* (see record-demo.sh), so the guard test
+  // checks both this number and the encoder settings together.
+  const frames = Math.floor(totalVirtualMs / FRAME_MS) + 1;
+  console.log(
+    JSON.stringify(
+      {
+        mode: modeName,
+        width: WIDTH,
+        virtualMs: totalVirtualMs,
+        frameMs: FRAME_MS,
+        realFrameMs: REAL_FRAME_MS,
+        frames,
+        playbackRealMs: frames * REAL_FRAME_MS,
+        speedFactor: totalVirtualMs / (frames * REAL_FRAME_MS),
+      },
+      null,
+      2,
+    ),
+  );
+  process.exit(0);
+}
 
 /* -------------------------------------------------------------------- render */
 

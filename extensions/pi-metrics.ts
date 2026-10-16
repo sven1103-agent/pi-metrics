@@ -22,10 +22,10 @@
  * so the block reads as one framed band instead of running into the transcript:
  *
  *   ─ pi-metrics · demo-model ─────────────────────────────────────────────────── 5 calls ─
- *   ○ waiting  ● writing  ‖ paused  ✔ done  [░░░░░░░░░░░░]  63.2 tok/s  (usage)  120 tok
- *   TPS      ▇▅▃▂▂▂▂▄  · avg    31 tok/s · p95    71 tok/s · 2.3s/col  30s  ·  max 100 auto
- *   STATS  split 25/75 conn/prefill  med first 400ms  med ITL 22ms  p95 ITL 75ms  5 calls
- *   HIST TTFT █▃▆█▁                  400ms  │  ITL ▁▂▆█▁                  22ms  (5 calls)
+ *   ○ waiting  ● writing  ‖ paused  ✔ done  [░░░░░░░░░░░░]  61.5 tok/s  (usage)  80 tok
+ *   TPS         ▇▄▃▃▃▃▂▂▂▂▂▂▂▄▄▂  · avg    26 tok/s · p95    62 tok/s  20s  ·  max 100 auto
+ *   STATS  split 25/75 conn/prefill  med first 400ms  med ITL 22ms  p95 ITL 74ms  5 calls
+ *   HIST TTFT ▆▃▅█▁                  400ms  │  ITL ▁▂▆█▁                  22ms  (5 calls)
  *
  * The layout never changes: row 1 always shows every state with the active one
  * highlighted, so there is nothing to re-read mid-response.
