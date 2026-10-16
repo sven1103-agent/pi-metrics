@@ -6,3 +6,8 @@ PI_METRICS_TRACE*
 
 # scratch harnesses
 scripts/_*.mjs
+
+# Recording intermediates. The .cast files are ~4 MB each and fully regenerable from
+# scripts/demo.mjs, so only the rendered GIFs are committed. See "Regenerating the demo
+# animation" in the README.
+docs/assets/*.cast
