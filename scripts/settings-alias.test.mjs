@@ -72,24 +72,33 @@ async function hudWith(metricsSettings) {
   return captured({ requestRender: () => {} }, theme).render(100).map(plain);
 }
 
-const thresholdLine = (lines) => lines.find((l) => l.includes("good ") && l.includes("fast ")) ?? "";
+// The thresholds are no longer printed as `good`/`bad` just to be readable: they are
+// configuration, not measurement, and the colour already encodes them. What the title must
+// still expose is `fast`, because it also floors the auto axis maximum. So the assertions
+// read the rendered axis text — which is where `fast` now lives — rather than a colour,
+// which a plain-text harness cannot observe.
+const axisLine = (lines) => lines.find((l) => /tok\/s/.test(l) && /fast /.test(l)) ?? "";
 
 // Legacy keys only.
-const legacy = thresholdLine(await hudWith({ rateGood: 7, rateBad: 3, rateFast: 11 }));
-assert.ok(/good 7\b/.test(legacy), `legacy rateGood ignored: ${legacy.trim()}`);
-assert.ok(/bad 3\b/.test(legacy), `legacy rateBad ignored: ${legacy.trim()}`);
+const legacy = axisLine(await hudWith({ rateFast: 11 }));
 assert.ok(/fast 11\b/.test(legacy), `legacy rateFast ignored: ${legacy.trim()}`);
 console.log("legacy rate* keys still applied:", legacy.trim().replace(/\s+/g, " "));
 
 // New keys only.
-const modern = thresholdLine(await hudWith({ tpsGood: 8, tpsBad: 4, tpsFast: 12 }));
-assert.ok(/good 8\b/.test(modern), `tpsGood ignored: ${modern.trim()}`);
+const modern = axisLine(await hudWith({ tpsFast: 12 }));
 assert.ok(/fast 12\b/.test(modern), `tpsFast ignored: ${modern.trim()}`);
 console.log("new tps* keys applied:      ", modern.trim().replace(/\s+/g, " "));
 
 // Both present: the new key must win.
-const both = thresholdLine(await hudWith({ rateGood: 7, tpsGood: 9 }));
-assert.ok(/good 9\b/.test(both), `new key must win over the alias: ${both.trim()}`);
+const both = axisLine(await hudWith({ rateFast: 11, tpsFast: 13 }));
+assert.ok(/fast 13\b/.test(both), `new key must win over the alias: ${both.trim()}`);
 console.log("new key wins when both set: ", both.trim().replace(/\s+/g, " "));
+
+// `tpsWindow` and the legacy `rateWindow` are the other renamed pair, and the window is now
+// rendered next to the axis ceiling. Assert it moved rather than merely still existing.
+const windowLine = axisLine(await hudWith({ tpsWindow: 45 }));
+assert.ok(/45s/.test(windowLine), `tpsWindow must drive the rendered window: ${windowLine.trim()}`);
+assert.ok(/max \d/.test(windowLine), `the window must sit with the axis ceiling: ${windowLine.trim()}`);
+console.log("window rendered with the axis:  ", windowLine.trim().replace(/\s+/g, " "));
 
 console.log("\nall settings-alias assertions passed");

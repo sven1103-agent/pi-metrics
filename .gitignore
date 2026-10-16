@@ -3,3 +3,6 @@ node_modules/
 pi-metrics-trace*.log
 PI_METRICS_TRACE*
 .DS_Store
+
+# scratch harnesses
+scripts/_*.mjs

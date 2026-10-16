@@ -132,4 +132,18 @@ assert.ok(
 );
 
 console.log(`\nratio real/estimate = ${(realTok / estTok).toFixed(2)} (expected ~2.00 for divisor 4)`);
+
+// --- provenance tag ---------------------------------------------------------------
+// The HUD must say which of the two figures it is showing. This is the difference the
+// module docblock promises, and it is the only way a user can tell a provider-reported
+// number from a character estimate — without it an estimate reads as authoritative.
+const tagOf = (lines) => {
+  const line = lines.find((l) => /tok\/s/.test(l)) ?? "";
+  const m = line.match(/\((usage|est)\)/);
+  return m?.[1];
+};
+assert.equal(tagOf(withUsage), "usage", `a provider-reported call must be tagged (usage): ${withUsage[1]?.trim()}`);
+assert.equal(tagOf(withoutUsage), "est", `a call with no usage must be tagged (est): ${withoutUsage[1]?.trim()}`);
+console.log("provenance tag: (usage) when reported, (est) when estimated");
+
 console.log("all TPS-accuracy assertions passed");

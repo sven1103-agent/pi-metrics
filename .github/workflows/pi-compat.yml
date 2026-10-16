@@ -62,7 +62,7 @@ jobs:
       # Behavioural tests run per Pi version too: the event payload shapes these rely on
       # are exactly what a Pi release can change.
       - name: Behavioural tests
-        run: node scripts/tokens.test.mjs && node scripts/tps-accuracy.test.mjs && node scripts/settings-alias.test.mjs
+        run: node scripts/tokens.test.mjs && node scripts/tps-accuracy.test.mjs && node scripts/settings-alias.test.mjs && node scripts/hud-layout.test.mjs
 
       - name: Load gate (real pi binary)
         env:

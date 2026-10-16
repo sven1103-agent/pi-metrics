@@ -8,8 +8,8 @@ inter-token latency, decode throughput and cost — for one call, and for the se
 
 ```
 ─ pi-metrics · deepseek-v3.1 ───────────────────────────── 3 calls ─
-○ waiting  ● writing  ‖ paused  ✔ done  [█████░░░░░░░]  38 tok/s  255 tok
-TPS 30s  ▃▄▄▁▁█▄▄▆▅  · avg   34 tok/s · p95   46 tok/s
+○ waiting  ● writing  ‖ paused  ✔ done  [█████░░░░░░░]  38.0 tok/s  (usage)  255 tok
+TPS  ▃▄▄▁▁█▄▄▆▅  · avg   34 tok/s · p95   46 tok/s       65s  ·  max 100 auto
 STATS  split 76/24 conn/prefill  med first 371ms  med ITL 28ms  p95 ITL 45ms  3 calls
 HIST TTFT ▁▂▃▅▇█▇▅▃▂ 1.8s  │  ITL ▂▃▅▇█▆▄ 41ms  (12 calls)
 ```
@@ -64,79 +64,69 @@ All optional, under the `pi-metrics` key in `~/.pi/agent/settings.json`:
 ```
 
 `style` is `compact` (four lines) or `normal` (multi-row graphs). `graphStyle` is
-`braille` or `block`. `colorMode` is `calm`, `vivid` or `mono`. `tpsMax` is a fixed
-tok/s ceiling or `auto` (session p98, never below `tpsFast`). `charsPerToken` is `auto`
-(calibrate from this session) or a fixed characters-per-token divisor. `persist` appends
-a one-line card per call to the transcript.
+`braille` or `block`. `colorMode` is `calm`, `vivid` or `mono`. `tpsMax` is a fixed tok/s
+ceiling or `auto` (session p98, never below `tpsFast`). `charsPerToken` is `auto`
+(calibrate from this session) or a fixed characters-per-token divisor. `persist` appends a
+one-line card per call to the transcript.
 
 The pre-0.1.0 names `rateWindow` / `rateMax` / `rateGood` / `rateBad` / `rateFast` are
 still read as aliases, so an existing config keeps working. When both a legacy and a new
 key are set, the new key wins.
 
+`tpsGood` and `tpsBad` colour the HUD but are deliberately not printed: they are
+configuration, not measurement, and printing them invited reading them as results.
+`tpsFast` is printed because it also floors the automatic chart ceiling.
+
 ## What it measures
 
-- **TTFT** — request → first streamed token, reported as a session median. `/metrics report`
-  additionally splits it into `conn` (request → response headers) and `prefill`
-  (headers → first token) when the provider emits response headers; the live HUD shows the
-  pair as a percentage split, and the report shows `–` when the provider does not expose
-  the boundary. `conn` folds in any server-side queueing, so the split compares calls to
-  the *same* provider rather than across providers.
-- **ITL** — mean gap between streamed deltas, reported as a session median and p95.
-  This is stream *smoothness*, not throughput: some providers batch several tokens
-  into one delta.
-- **tok/s** — decode throughput. The figure shown is the provider's own token count
-  (`usage.output`) whenever it reports one, and an estimate from streamed characters while
-  the call is still running — estimated values carry a `~` prefix. When a call finishes,
-  the real count replaces the estimate in the TPS history too, so a completed call's
-  throughput is exact rather than approximately right.
-- **TPS** — a session timeline of tokens generated per second, one column per completed
-  second. It is session-scoped and never resets per call, so separate writing actions stay
-  comparable. Its summary is a **mean** and p95, deliberately: a stalled second is
-  delivered throughput, not noise, and a median would flatter it. Latency figures use the
-  median for the opposite reason — latency has a long right tail.
-- **usage** — input/output/cache and reasoning tokens plus cost, as reported by the
-  provider.
+- **TTFT** — request → first streamed token, as a session median. `/metrics report` splits
+  it further into `conn` (request → response headers) and `prefill` (headers → first
+  token) when the provider exposes the boundary; the live HUD shows the pair as a
+  percentage, and the report shows `–` otherwise. `conn` folds in server-side queueing, so
+  the split compares calls to the *same* provider rather than across providers.
+- **ITL** — gap between streamed deltas, as a session median and p95. This is stream
+  *smoothness*, not throughput: some providers batch several tokens into one delta.
+- **tok/s** — decode throughput, tagged with its source: `(usage)` when the provider
+  reported `usage.output`, or `(est)` in amber while the figure still comes from streamed
+  characters. A `(usage)` call is finished and its TPS buckets were rescaled to the
+  provider's exact count. Estimates are never shown as if they were measured.
+- **TPS** — a session timeline of tokens per second, one column per completed second,
+  never reset per call so separate writing actions stay comparable. The title's left side
+  is measurement (mean and p95); its right side is the chart's own axes — the recording
+  window in seconds, then the tok/s ceiling, marked `auto` when derived from the session.
+- **usage** — input/output/cache and reasoning tokens plus cost, as reported.
+
+Latency uses the **median**, throughput the **mean**, and the difference is deliberate.
+Latency has a long right tail (cold connections, provider queueing) where single outliers
+drag a mean away from the typical call. Throughput has no such noise: a stalled second is
+delivered throughput, and a median would flatter it.
 
 ### About the character estimate
 
-When a provider reports no token usage, tokens are estimated from streamed characters
-divided by `charsPerToken`. There is no universally correct divisor: measured across
-39,000 real calls with provider-reported counts as ground truth, characters-per-token
-ranges from about 3.0 (DeepSeek) to 3.8 (Kimi), so a fixed 4 is off by ~19% typically
-and ~49% at p90. The default is therefore `auto`, which calibrates from the session's own
-completed calls. Set a number instead if you want reproducibility.
+When a provider reports no usage, tokens are estimated from streamed characters divided by
+`charsPerToken`. Measured across 39,000 real calls against provider-reported counts, the
+true characters-per-token ranges from ~3.0 (DeepSeek) to ~3.8 (Kimi), so a fixed 4 is off
+by ~19% typically and ~49% at p90. The default `auto` calibrates from the session's own
+completed calls; set a number for reproducibility.
 
 ## Supported Pi versions
 
-Two different floors, because they are genuinely different:
+Each version is its own CI job, so the Checks tab names the exact release that broke:
 
-| | Range | Verified by |
+| Pi | Typechecks clean | Loads |
 |---|---|---|
-| **Typechecks clean** | Pi **1.1.0 – 1.3.0** | `tsc --noEmit` per release |
-| **Loads** | Pi **≥ 0.85.1** | real `pi` binary, headless |
-
-Per-release status is checked in CI — each version is its own job, so the Checks tab
-names the exact version that broke:
-
-| Pi | Typecheck | Loads |
-|---|---|---|
-| 1.3.0 | ✅ gating | ✅ gating |
-| 1.2.0 | ✅ gating | ✅ gating |
-| 1.1.0 | ✅ gating | ✅ gating |
-| 1.0.4, 1.0.0, 0.99.2 | ⚠️ errors reported, not asserted | ✅ gating |
+| 1.3.0 · 1.2.0 · 1.1.0 | ✅ gating | ✅ gating |
+| 1.0.4 · 1.0.0 · 0.99.2 | ⚠️ errors reported, not asserted | ✅ gating |
 | < 0.85.1 | ❌ | ❌ does not load |
 
-Below Pi 1.1.0 the published typings are incomplete — the extension still loads, but it
-does not typecheck. In that lane CI runs the load gate as a real check and only
-*reports* the typecheck error count as evidence for the floor above; it never asserts
-that errors must be present, so an upstream backport lowers the floor without breaking
-the build.
+Below 1.1.0 the published typings are incomplete: the extension loads, but does not
+typecheck. That lane asserts the load gate and only *reports* the error count as evidence
+for the floor — it never requires errors to be present, so an upstream backport lowers the
+floor without breaking the build. The `@earendil-works/pi-ai` peer floor matches at
+`>=1.1.0`; the other two stay at `*` as Pi requires.
 
-The `@earendil-works/pi-ai` peerDependency floor is `>=1.1.0`, matching the typecheck
-floor. The other two stay at `*` as Pi requires.
-
-**Interactive rendering is verified manually.** The widget is TUI-only, so a headless
-run cannot exercise it. Do not read these badges as covering what the HUD looks like.
+**Interactive rendering is verified manually.** The widget is TUI-only, so a headless run
+cannot exercise it. Do not read these badges as covering what the HUD looks like.
 
 ## What it does not do
 
@@ -148,9 +138,9 @@ run cannot exercise it. Do not read these badges as covering what the HUD looks 
 ## Maintained by
 
 [Sven Fillinger](https://github.com/sven1103), Research Software Engineer, University
-of Tübingen. The repository is operated through my agent alias
-[@sven1103-agent](https://github.com/sven1103-agent) — the account that authors the
-commits here. Same person; the alias exists so the automation is labelled as automation.
+of Tübingen, through my agent alias [@sven1103-agent](https://github.com/sven1103-agent)
+— the account that authors the commits here. Same person; the alias exists so the
+automation is labelled as automation.
 
 ## License
 

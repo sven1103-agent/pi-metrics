@@ -22,8 +22,8 @@
  * so the block reads as one framed band instead of running into the transcript:
  *
  *   ─ pi-metrics · deepseek-v3.1 ───────────────────────────── 3 calls ─
- *   ○ waiting  ● writing  ‖ paused  ✔ done  [█████░░░░░░░]  38 tok/s  255 tok
- *   TPS 65s  ▃▄▄▁▁█▄▄▆▅  · avg   34 tok/s · p95   46 tok/s
+ *   ○ waiting  ● writing  ‖ paused  ✔ done  [█████░░░░░░░]  38.0 tok/s  (usage)  255 tok
+ *   TPS  ▃▄▄▁▁█▄▄▆▅  · avg   34 tok/s · p95   46 tok/s       65s  ·  max 100 auto
  *   STATS  split 76/24 conn/prefill  med first 371ms  med ITL 28ms  p95 ITL 45ms  3 calls
  *   HIST TTFT ▁▂▃▅▇█▇▅▃▂ 1.8s  │  ITL ▂▃▅▇█▆▄ 41ms  (12 calls)
  *
@@ -38,8 +38,20 @@
  * Colour has four bands, keyed to `tpsFast` (100), `tpsGood` (30) and
  * `tpsBad` (15): green at/above `tpsGood` (a brighter green at `tpsFast`), amber
  * between `tpsGood` and `tpsBad`, and red below `tpsBad`. The bar empties once
- * writing stops. Row 3 shows SESSION medians — `med first` and `med ITL` — plus p95 ITL
- * and the call count; the full breakdown of a single call is in `/metrics report`.
+ * writing stops. Those thresholds are deliberately *not* printed: they are configuration,
+ * not measurement, and the colour already encodes them. `fast` is the exception, because
+ * it also floors the auto axis maximum, so the title keeps it to explain `max … auto`.
+ *
+ * Row 1 ends its metrics with where they came from: `(usage)` when the provider reported
+ * `usage.output`, in which case the call is finished and its throughput buckets were
+ * rescaled to that exact count; `(est)` while the figure is still derived from streamed
+ * characters. Estimates are marked in amber because a number you cannot trust should look
+ * different from one you can — and the tag replaced a `~` prefix that was both too quiet
+ * to notice and applied inconsistently (a finished call with no usage printed no `~` at
+ * all, despite being an estimate).
+ *
+ * Row 3 shows SESSION medians — `med first` and `med ITL` — plus p95 ITL and the call
+ * count; the full breakdown of a single call is in `/metrics report`.
  * Median rather than mean because latency has a long right tail (cold connections,
  * provider queueing): the mean is dragged by single outliers, and the HIST row and the
  * severity colouring already key off the median.
@@ -47,10 +59,12 @@
  * The TPS row is what the provider is actually delivering: one column per completed
  * writing second, height = tokens generated in that second (≈ tok/s). It is a SESSION
  * timeline — a new response keeps appending to it instead of resetting it, so you can
- * compare writing actions. Empty columns are seconds with no tokens. The trailing stats
- * are the session's observed *mean* and p95 throughput, plus the call count. Throughput
- * stays a mean deliberately: a stalled second is delivered throughput, not noise, and a
- * median would flatter it.
+ * compare writing actions. Empty columns are seconds with no tokens. The left of the
+ * title line is measurement (mean and p95 throughput); the right is the chart's own axes —
+ * how many seconds of history are plotted, then the tok/s ceiling, with `auto` when that
+ * ceiling is derived from the session rather than fixed. Throughput stays a mean
+ * deliberately: a stalled second is delivered throughput, not noise, and a median would
+ * flatter it.
  *
  * Token counts are the provider's own (`usage.output`) whenever it reports them, and the
  * live figure during streaming is an estimate from streamed characters. Once a call ends
@@ -58,7 +72,8 @@
  * throughput is exact rather than approximately right. When a provider reports nothing,
  * the divisor is calibrated from the session's own completed calls: measured over 39k
  * real calls the true characters-per-token ranges from ~3.0 to ~3.8 by provider, so a
- * fixed 4 is wrong by ~19% typically and ~49% at p90. Estimated values are prefixed `~`.
+ * fixed 4 is wrong by ~19% typically and ~49% at p90. The HUD marks which of the two any
+ * given figure is; see the `(usage)` / `(est)` note above.
  *
  * While a call streams, the widget repaints on a timer so a stalled second shows up as
  * it happens, and the completed second is the one plotted (the in-progress second is
@@ -748,6 +763,8 @@ interface Derived {
   decodeMs?: number;
   tokensPerSecond?: number;
   outputTokens?: number;
+  /** Character-based token estimate; present when `outputTokens` is not. */
+  estimatedOutput?: number;
   estimatedTokens: boolean;
 }
 
@@ -783,7 +800,7 @@ function derive(call: CallStats, now: number): Derived {
   const decodeMs = ttftMs !== undefined && ttoutMs !== undefined ? Math.max(1, ttoutMs - ttftMs) : undefined;
   const tokensPerSecond = decodeMs !== undefined && tokens !== undefined && tokens > 1 ? tokens / (decodeMs / 1_000) : undefined;
 
-  return { requestStartPerf, connectMs, prefillMs, prefillIncludesConnect, ttftMs, ttftTextMs, ttoutMs, itlMeanMs, itlP95Ms, decodeMs, tokensPerSecond, outputTokens, estimatedTokens };
+  return { requestStartPerf, connectMs, prefillMs, prefillIncludesConnect, ttftMs, ttftTextMs, ttoutMs, itlMeanMs, itlP95Ms, decodeMs, tokensPerSecond, outputTokens, estimatedOutput, estimatedTokens };
 }
 
 /* -------------------------------------------------------------------- widget */
@@ -842,11 +859,15 @@ function pressureBar(rate: number | undefined, cells: number, good: number, bad:
  * Row 1 is deliberately stable: the same elements are always present and only the
  * highlighted state moves, so the user never has to re-read a changing layout.
  *
- *   ○ waiting  ● writing  ‖ paused  ✔ done   [██████████░░]  ~38 tok/s  ~275 tok
+ *   ○ waiting  ● writing  ‖ paused  ✔ done   [██████████░░]  38.0 tok/s  (est)  275 tok
  *
  * The pressure bar is a gauge for the "good baseline": it fills toward `tpsGood`
  * (30 tok/s) and is green once there, brighter green at/above `tpsFast` (100 tok/s),
  * amber between `tpsBad` (15) and `tpsGood`, and red below `tpsBad`.
+ *
+ * The trailing `(usage)` / `(est)` tag names where the numbers came from — see the
+ * module docblock. It sits directly after the rate because that is the figure the tag
+ * qualifies, and because a narrow terminal truncates the end of the row.
  */
 function renderStateRow(call: CallStats, state: HudState, d: Derived, now: number, theme: Theme): string {
   const recent = call.gaps.length >= 4 ? median(call.gaps.slice(-20)) : undefined;
@@ -872,14 +893,21 @@ function renderStateRow(call: CallStats, state: HudState, d: Derived, now: numbe
   const rate = measurable ? (call.live ? liveRate : d.tokensPerSecond ?? liveRate) : undefined;
   const reported = reportedOutputTokens(call);
   const tokens = reported ?? (call.chars > 0 ? Math.round(call.chars / divisor) : undefined);
+  // Where the number came from. While a call streams there is no provider count yet, so the
+  // figure is derived from characters; a finished call that reported `usage.output` has the
+  // provider's own count and its buckets were rescaled to match. This replaced a `~` prefix
+  // that was too subtle to read and was applied inconsistently — a finished call with no
+  // usage showed no `~` at all, so an estimate looked authoritative.
+  const fromProvider = !call.live && reported !== undefined;
 
   const segments: string[] = [stateStrip(active, theme, state.settings.colorMode)];
   // Pressure is a live signal: it falls back to empty once writing stops.
   const mode = state.settings.colorMode;
   const { tpsGood, tpsBad, tpsFast } = state.settings;
   segments.push(pressureBar(call.live ? rate : undefined, 12, tpsGood, tpsBad, tpsFast, theme, mode));
-  segments.push(rate !== undefined ? theme.style(`${call.live ? "~" : ""}${rate >= 100 ? rate.toFixed(0) : rate.toFixed(1)} tok/s`, { fg: severityColor(rateSeverity(rate, tpsGood, tpsBad, tpsFast), theme, mode) }) : dim(theme, call.live ? "… tok/s" : "– tok/s"));
-  if (tokens !== undefined) segments.push(theme.fg("muted", `${call.live || reported === undefined ? "~" : ""}${fmtTokens(tokens)} tok`));
+  segments.push(rate !== undefined ? theme.style(`${rate >= 100 ? rate.toFixed(0) : rate.toFixed(1)} tok/s`, { fg: severityColor(rateSeverity(rate, tpsGood, tpsBad, tpsFast), theme, mode) }) : dim(theme, call.live ? "… tok/s" : "– tok/s"));
+  if (rate !== undefined || tokens !== undefined) segments.push(fromProvider ? dim(theme, "(usage)") : theme.fg("warning", "(est)"));
+  if (tokens !== undefined) segments.push(theme.fg("muted", `${fmtTokens(tokens)} tok`));
   if (stalled && sinceToken !== undefined) segments.push(theme.fg("error", `waiting ${fmtMs(sinceToken)}`));
 
   return segments.join(dim(theme, "  "));
@@ -1075,12 +1103,26 @@ function renderHeader(state: HudState, width: number, theme: Theme): string {
   return theme.fg("borderMuted", text);
 }
 
-/** Title line: plain labels on the left, the axis maximum right-aligned. */
-function chartTitle(labels: string, maximum: string, width: number, theme: Theme): string {
-  const labelText = dim(theme, labels);
-  const maxText = dim(theme, maximum);
-  const gap = Math.max(1, width - visibleWidth(labels) - visibleWidth(maximum));
-  return labelText + " ".repeat(gap) + maxText;
+/**
+ * Title line: labels on the left, the chart's axis text right-aligned.
+ *
+ * The axis must survive a narrow terminal. Truncation happens at the end of the line, so a
+ * naive left-then-gap layout turns `p95 300` + `120s · max 500 auto` into the run-on
+ * `p95 300 120s · max 500 a…`, where the axis reads as more stats and is itself cut. So if
+ * the two do not both fit, the *labels* shrink and the axis stays whole.
+ */
+function chartTitle(labels: string, axis: string, width: number, theme: Theme): string {
+  const axisText = dim(theme, axis);
+  const minGap = 2;
+  const room = width - visibleWidth(axis) - minGap;
+  if (room < 1) {
+    // Not even the axis fits: show as much of it as possible rather than a broken mix.
+    return truncateToWidth(axisText, Math.max(1, width), "…");
+  }
+  // Only warn when a figure the user might act on was actually dropped.
+  const labelsText = visibleWidth(labels) <= room ? dim(theme, labels) : theme.fg("warning", truncateToWidth(labels, room, "…"));
+  const gap = Math.max(minGap, width - visibleWidth(labelsText) - visibleWidth(axisText));
+  return labelsText + " ".repeat(gap) + axisText;
 }
 
 /**
@@ -1101,11 +1143,13 @@ function renderNormalHud(state: HudState, call: CallStats, d: Derived, now: numb
   const rateTrace = buildSessionRateTrace(state, rateColumns, windowSeconds);
   const averageRate = mean(state.rateHistory);
   const p95Rate = percentile(state.rateHistory, 0.95);
+  // Left is measurement, right is the chart's own axes. The `good`/`bad` thresholds used to
+  // be printed here; they are configuration rather than measurement, and the colour already
+  // encodes them, so they are gone. `fast` stays because it is not merely a colour bound: it
+  // is the floor the auto maximum can never go below, so without it `max … auto` would have
+  // no visible explanation.
   const rateLabels = [
     "TPS tok/s",
-    `${windowSeconds}s`,
-    `good ${settings.tpsGood}`,
-    `bad ${settings.tpsBad}`,
     `fast ${settings.tpsFast}`,
     averageRate !== undefined ? `avg ${Math.round(averageRate)}` : undefined,
     p95Rate !== undefined ? `p95 ${Math.round(p95Rate)}` : undefined,
@@ -1113,8 +1157,8 @@ function renderNormalHud(state: HudState, call: CallStats, d: Derived, now: numb
   ]
     .filter((part): part is string => part !== undefined)
     .join("  ·  ");
-  lines.push(chartTitle(rateLabels, `max ${tpsMax}${tpsMaxAuto ? " auto" : ""}`, rateWidth, theme));
-  const rateColorOf = (value: number) => severityColor(rateSeverity(value, settings.tpsGood, settings.tpsBad, settings.tpsFast), theme, mode);
+  const rateAxis = `${windowSeconds}s  ·  max ${tpsMax}${tpsMaxAuto ? " auto" : ""}`;
+  lines.push(chartTitle(rateLabels, rateAxis, rateWidth, theme));  const rateColorOf = (value: number) => severityColor(rateSeverity(value, settings.tpsGood, settings.tpsBad, settings.tpsFast), theme, mode);
   const rateLines = [settings.tpsBad, settings.tpsGood, settings.tpsFast].filter((value) => value < tpsMax);
   const rateRows = settings.graphStyle === "braille"
     ? renderBrailleChart(rateTrace.values, rateWidth, 5, tpsMax, rateColorOf, theme, "right", rateLines)
@@ -1185,10 +1229,14 @@ function renderHud(state: HudState, width: number, theme: Theme): string[] {
     flushRateHistory(state, call, d);
 
     const windowSeconds = Math.max(10, Math.round(settings.tpsWindow));
-    const labelText = `TPS ${windowSeconds}s`;
+    const labelText = "TPS";
     const padded = (value: string) => value.padStart(6);
     const averageRate = mean(state.rateHistory);
     const p95Rate = percentile(state.rateHistory, 0.95);
+    const { max: tpsMax, auto: tpsMaxAuto } = resolveRateMax(state.rateHistory, settings.tpsMax, settings.tpsFast);
+    // The recording window and the ceiling are attributes of the chart, not of the data, so
+    // they sit together at the right instead of reading as a prefix to the graph.
+    const axisText = `${windowSeconds}s  ·  max ${tpsMax}${tpsMaxAuto ? " auto" : ""}`;
 
     // Two passes: size the chart from the stats text, then account for a compression note.
     const statsFor = (perColumn: number) => {
@@ -1199,20 +1247,22 @@ function renderHud(state: HudState, width: number, theme: Theme): string[] {
       return `· ${stats.join(" · ")}`;
     };
 
-    let graphWidth = Math.max(12, width - visibleWidth(labelText) - 3 - visibleWidth(statsFor(1)));
+    // Reserve the axis text before the stats: truncation eats the end of the line, so the
+    // chart's scale must be accounted for first or a narrow terminal would cut it off.
+    const fixed = visibleWidth(labelText) + 1 + visibleWidth(axisText) + 2;
+    let graphWidth = Math.max(12, width - fixed - visibleWidth(statsFor(1)) - 2);
     let trace = buildSessionRateTrace(state, graphWidth, windowSeconds);
     if (trace.perColumnSeconds > 1.05) {
-      graphWidth = Math.max(12, width - visibleWidth(labelText) - 3 - visibleWidth(statsFor(trace.perColumnSeconds)));
+      graphWidth = Math.max(12, width - fixed - visibleWidth(statsFor(trace.perColumnSeconds)) - 2);
       trace = buildSessionRateTrace(state, graphWidth, windowSeconds);
     }
 
     const statsText = statsFor(trace.perColumnSeconds);
-    const statsRoom = Math.max(0, width - visibleWidth(labelText) - 3 - graphWidth);
+    const statsRoom = Math.max(0, width - fixed - graphWidth - 2);
     const statsLine = statsRoom > 0 ? truncateToWidth(statsText, statsRoom, "…") : "";
 
-    const { max: tpsMax, auto: tpsMaxAuto } = resolveRateMax(state.rateHistory, settings.tpsMax, settings.tpsFast);
     const bars = sparklineRate(trace.values, [0, tpsMax], settings.tpsGood, settings.tpsBad, settings.tpsFast, theme, settings.colorMode);
-    lines.push(`${dim(theme, labelText)} ${bars}${tpsMaxAuto ? `  ${dim(theme, `max ${tpsMax}`)}` : ""}${statsLine ? `  ${dim(theme, statsLine)}` : ""}`);
+    lines.push(`${dim(theme, labelText)} ${bars}${statsLine ? `  ${dim(theme, statsLine)}` : ""}  ${dim(theme, axisText)}`);
   }
 
   /* line 3 — session averages --------------------------------------------- */
@@ -1301,7 +1351,10 @@ function buildReportRows(calls: CallStats[]): ReportRow[] {
       itl: fmtMs(d.itlMeanMs),
       tps: d.tokensPerSecond !== undefined ? d.tokensPerSecond.toFixed(1) : "–",
       ttout: fmtMs(d.ttoutMs),
-      out: d.estimatedTokens ? `~${fmtTokens(call.chunks)}` : fmtTokens(d.outputTokens),
+      // Same estimate the HUD and the TPS chart use (characters / divisor). It must NOT
+      // fall back to `call.chunks`: the number of streamed deltas is a batching artifact,
+      // so some providers would report a wildly different figure here than in the chart.
+      out: d.estimatedTokens ? `~${fmtTokens(d.estimatedOutput)}` : fmtTokens(d.outputTokens),
       cost: fmtCost(call.usage?.cost?.total, true) ?? "–",
       status: call.error ? (call.aborted ? "abort" : "error") : "ok",
       ttftMs: d.ttftMs,
