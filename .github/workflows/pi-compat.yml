@@ -36,12 +36,22 @@ jobs:
 
       # Pin all three host packages to the same Pi release. They are
       # peerDependencies at "*", so this overrides them for the run only.
+      # The whole Pi dependency family must move together. Installing only the three
+      # packages the extension imports leaves transitive siblings (pi-codemode, pi-mcp,
+      # ...) at the lockfile's newer versions, because pi-coding-agent declares them as
+      # ^ranges. That mixture does not load: Pi 1.1.0 with pi-codemode 1.3.0 fails with
+      # "does not provide an export named 'MCP_TYPESCRIPT_PREAMBLE'".
       - name: Install Pi ${{ matrix.pi }}
         run: |
           npm install --no-save --no-audit --no-fund \
             "@earendil-works/pi-coding-agent@${{ matrix.pi }}" \
             "@earendil-works/pi-ai@${{ matrix.pi }}" \
-            "@earendil-works/pi-tui@${{ matrix.pi }}"
+            "@earendil-works/pi-tui@${{ matrix.pi }}" \
+            "@earendil-works/pi-codemode@${{ matrix.pi }}" \
+            "@earendil-works/pi-mcp@${{ matrix.pi }}" \
+            "@earendil-works/pi-agent-core@${{ matrix.pi }}" \
+            "@earendil-works/chord@${{ matrix.pi }}" \
+            "@earendil-works/pi-telemetry@${{ matrix.pi }}"
 
       - name: Typecheck against Pi ${{ matrix.pi }}
         run: npx tsc --noEmit
@@ -92,12 +102,22 @@ jobs:
 
       - run: npm ci
 
+      # The whole Pi dependency family must move together. Installing only the three
+      # packages the extension imports leaves transitive siblings (pi-codemode, pi-mcp,
+      # ...) at the lockfile's newer versions, because pi-coding-agent declares them as
+      # ^ranges. That mixture does not load: Pi 1.1.0 with pi-codemode 1.3.0 fails with
+      # "does not provide an export named 'MCP_TYPESCRIPT_PREAMBLE'".
       - name: Install Pi ${{ matrix.pi }}
         run: |
           npm install --no-save --no-audit --no-fund \
             "@earendil-works/pi-coding-agent@${{ matrix.pi }}" \
             "@earendil-works/pi-ai@${{ matrix.pi }}" \
-            "@earendil-works/pi-tui@${{ matrix.pi }}"
+            "@earendil-works/pi-tui@${{ matrix.pi }}" \
+            "@earendil-works/pi-codemode@${{ matrix.pi }}" \
+            "@earendil-works/pi-mcp@${{ matrix.pi }}" \
+            "@earendil-works/pi-agent-core@${{ matrix.pi }}" \
+            "@earendil-works/chord@${{ matrix.pi }}" \
+            "@earendil-works/pi-telemetry@${{ matrix.pi }}"
 
       # Load gate runs FIRST in this lane. The typecheck below is expected to fail
       # before 1.1.0, and a failed step skips the rest of the job — which would mean
