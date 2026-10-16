@@ -55,7 +55,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/smoke.mjs && node scripts/tokens.test.mjs && node scripts/tps-accuracy.test.mjs && node scripts/settings-alias.test.mjs && node scripts/hud-layout.test.mjs && node scripts/commands.test.mjs && node scripts/docs-sync.test.mjs && node scripts/demo-pacing.test.mjs",
+    "test": "node scripts/smoke.mjs && node scripts/tokens.test.mjs && node scripts/tps-accuracy.test.mjs && node scripts/settings-alias.test.mjs && node scripts/hud-layout.test.mjs && node scripts/commands.test.mjs && node scripts/cost.test.mjs && node scripts/docs-sync.test.mjs && node scripts/demo-pacing.test.mjs",
     "smoke": "node scripts/smoke.mjs"
   }
 }

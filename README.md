@@ -16,7 +16,7 @@ The same session in `graphStyle: "block"`:
 <summary>A static frame, as text</summary>
 
 ```
- ─ pi-metrics · demo-model ─────────────────────────────────────────────────────────────── 3 calls ─
+ ─ pi-metrics · demo-model ──────────────────────────────────────────────── 3 calls · total $0.010 ─
  ○ waiting  ● writing  ‖ paused  ✔ done  [██████░░░░░░]  14.9 tok/s  (est)  30 tok  waiting 900ms
 
  TPS tok/s  ·  fast 100  ·  avg 32  ·  p95 79                                  20s  ·  max 100 auto
@@ -104,8 +104,10 @@ All optional, under the `pi-metrics` key in `~/.pi/agent/settings.json`:
 `braille` or `block`. `colorMode` is `calm`, `vivid` or `mono`. `tpsMax` is a fixed tok/s
 ceiling or `auto` (session p98, never below `tpsFast`). `charsPerToken` is `auto`
 (calibrate from this session) or a fixed characters-per-token divisor. `persist` appends a
-one-line card per call to the transcript. `cost` controls the cost column in `/metrics
-report` and on the persisted card.
+one-line card per call to the transcript. `cost` shows the finished call's spend on the
+HUD's first row and the running session total in the header, and controls the cost column in
+`/metrics report` and on the persisted card. It is hidden when the provider reports no cost,
+so a local model does not show `$0.0000`.
 
 `placement` accepts `aboveEditor` / `belowEditor` and, because a natural guess is otherwise
 silently ignored, also `above` / `below`. A value that is unusable in any other way is
@@ -137,7 +139,9 @@ configuration, not measurement, and printing them invited reading them as result
   never reset per call so separate writing actions stay comparable. The title's left side
   is measurement (mean and p95); its right side is the chart's own axes — the recording
   window in seconds, then the tok/s ceiling, marked `auto` when derived from the session.
-- **usage** — input/output/cache and reasoning tokens plus cost, as reported.
+- **usage** — output tokens as reported, plus cost when the provider reports it. The
+  provider's own `usage.output` replaces the character estimate once a call ends; the
+  input/cache/reasoning breakdown is not currently displayed.
 
 Latency uses the **median**, throughput the **mean**, and the difference is deliberate.
 Latency has a long right tail (cold connections, provider queueing) where single outliers

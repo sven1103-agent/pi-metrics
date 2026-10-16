@@ -116,12 +116,18 @@ const CALLS = [
   // the counts keeps the colour bands identical while shortening each call — and the whole
   // animation now plays at real time (see REAL_FRAME_MS), so every virtual second here is a
   // real second of the viewer's attention. A 22s loop is a loop nobody finishes.
-  { connect: 140, prefill: 320, tokens: 90, itl: 12, input: 1_240 }, //  ~83 tok/s  bright green
-  { connect: 90, prefill: 180, tokens: 70, itl: 22, input: 1_380 }, //  ~45 tok/s  green
+  //
+  // `costUsd` is a plausible per-call total for an input-heavy session with a small completion
+  // (roughly $3/Mtok in, $15/Mtok out — the shape Claude Sonnet produces, and the shape most
+  // real sessions in this project have). It is illustrative like everything else here, and it
+  // is what makes the HUD's cost readout and the session header total visible in the
+  // recording; the extension derives nothing of its own, it only displays the provider's.
+  { connect: 140, prefill: 320, tokens: 90, itl: 12, input: 1_240, costUsd: 0.0051 }, //  ~83 tok/s  bright green
+  { connect: 90, prefill: 180, tokens: 70, itl: 22, input: 1_380, costUsd: 0.0053 }, //  ~45 tok/s  green
   // Stalls part-way, so the `‖ paused` state is visible.
-  { connect: 110, prefill: 260, tokens: 55, itl: 40, input: 1_520, stallAfter: 30, stallMs: 900 }, // amber
-  { connect: 130, prefill: 420, tokens: 40, itl: 75, input: 1_610 }, //  ~13 tok/s  red
-  { connect: 80, prefill: 200, tokens: 80, itl: 15, input: 1_740 }, //  ~66 tok/s  green
+  { connect: 110, prefill: 260, tokens: 55, itl: 40, input: 1_520, costUsd: 0.0054, stallAfter: 30, stallMs: 900 }, // amber
+  { connect: 130, prefill: 420, tokens: 40, itl: 75, input: 1_610, costUsd: 0.0055 }, //  ~13 tok/s  red
+  { connect: 80, prefill: 200, tokens: 80, itl: 15, input: 1_740, costUsd: 0.0059 }, //  ~66 tok/s  green
 ];
 const IDLE_AT_START_MS = 700;
 /** Pause between calls, so the boundary between writing actions is visible in the chart. */
@@ -221,7 +227,7 @@ for (const [callIndex, call] of CALLS.entries()) {
       cacheRead: 0,
       cacheWrite: 0,
       totalTokens: call.input + call.tokens,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: { input: call.costUsd, output: 0, cacheRead: 0, cacheWrite: 0, total: call.costUsd },
     };
     message.durationMs = call.connect + call.prefill + call.tokens * call.itl + (call.stallMs ?? 0) + 20;
     fire("message_end", { message: asAssistant() });
