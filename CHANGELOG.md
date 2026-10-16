@@ -34,6 +34,19 @@ rename of them:
   monotone (~195° → ~150° → 85° → 25°) and are mixed in Oklch, not RGB, so the midtones stay
   saturated instead of passing through grey. `calm` keeps the theme's green/amber/red and
   hue-shifts only `fast`; `vivid` uses the full hand-picked set; `mono` still has no hue.
+- The chart fill is a *vertical* hue gradient: colour follows the magnitude at each row rather
+  than the sample in each column, so bars read as gradients instead of flat slabs. Nothing is
+  lost — on a single-series plot a bar's height already is its value, so the top cell still
+  carries that bar's own colour, and short (bad) bars keep it rather than being hidden in the
+  cool base. The direction is per chart, since "good" is up for throughput and down for
+  latency: TPS runs teal at the top, TTFT/ITL teal at the bottom, turning over at the median
+  reference line. A braille cell carries one colour across four sub-rows, so the fade steps
+  once per text row (four or five bands). The one-row sparklines in the persisted card keep the
+  per-sample colour, the only thing a single row can show.
+- `graphStyle: "block"` actually draws its TTFT and ITL histograms. Both were handed the
+  braille slot count (two samples per cell) while the block renderer only ever reads the last
+  `width` slots — the padding half — so the two charts rendered empty, and the README's own
+  block-mode animation showed a blank histogram. The slot count now follows the renderer.
 - The latency ramp is symmetric in the ratio to the median, so the cool end is reachable at
   all. `latencySeverity` clamped to `[0, 1]`, which made *every* latency at or below the
   session median the same green: 3× the median was red, but a tenth of it was no cooler than

@@ -43,7 +43,21 @@
  * `tpsGood` (30) and `tpsBad` (15): teal at `tpsFast`, green at `tpsGood`, amber at
  * `tpsBad`, red below it. Hue moves monotonically (~195° → ~150° → 85° → 25°) so no hue
  * is crossed twice, and every step is interpolated in Oklch rather than RGB, so the midtones
- * stay saturated instead of passing through grey. The bar empties once writing stops. Those
+ * stay saturated instead of passing through grey.
+ *
+ * In the *charts* the ramp is applied **vertically** — colour follows the magnitude at each
+ * row, not the sample in each column — so a bar is a gradient rather than a flat slab. This
+ * loses nothing, because on a single-series plot the bar's height already is its value, so the
+ * top cell of a bar still carries that bar's own colour; short (bad) bars keep it too, instead
+ * of being hidden in the cool base. The direction is per chart, because "good" is up for
+ * throughput and down for latency: the TPS graph runs teal at the top, the TTFT/ITL graphs run
+ * teal at the bottom. There the neutral point is the session median, so the ramp turns over
+ * exactly where the median reference line is drawn. A braille cell holds one foreground colour
+ * across its four sub-rows, so the fade steps once per text row: four or five bands, not a
+ * continuous ramp. (The one-line sparklines in the persisted card are a single row tall and
+ * keep the per-sample colour, which is the only thing a single row can show.)
+ *
+ * The bar empties once writing stops. Those
  * thresholds are deliberately *not* printed: they are configuration, not measurement, and
  * the colour already encodes them. `fast` is the exception, because
  * it also floors the auto axis maximum, so the title keeps it to explain `max … auto`.
@@ -1118,6 +1132,13 @@ function toSlots(values: number[], slots: number, align: "left" | "right" = "rig
  * Braille area chart: each character cell is a 2x4 dot matrix, so one text row carries
  * four levels of height and the bars read as stacked dots. Two samples share a cell,
  * giving 2x the horizontal resolution of the block chart for the same width.
+ *
+ * Colour depends on the *row*, not on the sample: the fill is a vertical hue gradient
+ * spanning the axis, so a bar is tinted by the magnitude at each height rather than being a
+ * flat slab of one colour. The top of a bar therefore still carries that bar's own severity
+ * colour, and a short (bad) bar keeps it too instead of being lost in the cool base. A braille
+ * cell holds a single foreground colour over four sub-rows, so the gradient steps once per
+ * text row: four or five bands, not a continuous ramp.
  */
 function renderBrailleChart(
   values: (number | null)[],
@@ -1135,17 +1156,17 @@ function renderBrailleChart(
   const offset = align === "left" ? 0 : Math.max(0, slots - shown.length);
   const rows: string[] = [];
   for (let row = height - 1; row >= 0; row--) {
+    // Mid-height magnitude of this text row: what the gradient is keyed to.
+    const rowValue = (safeMax * (row + 0.5)) / height;
     let line = "";
     for (let column = 0; column < columns; column++) {
       let bits = 0;
       let hasBar = false;
-      let worst: number | undefined;
       for (let half = 0; half < 2; half++) {
         const index = column * 2 + half - offset;
         if (index < 0 || index >= shown.length) continue;
         const value = shown[index];
         if (value === null) continue;
-        if (worst === undefined || value > worst) worst = value;
         const filled = clamp01(value / safeMax) * height * 4; // sub-rows from the bottom
         for (let sub = 0; sub < 4; sub++) {
           if (filled > row * 4 + sub) {
@@ -1166,7 +1187,7 @@ function renderBrailleChart(
         }
       }
       if (bits === 0) line += row === 0 ? dim(theme, "⠂") : " ";
-      else if (hasBar) line += theme.style(String.fromCharCode(0x2800 + bits), { fg: colorOf(worst ?? 0) });
+      else if (hasBar) line += theme.style(String.fromCharCode(0x2800 + bits), { fg: colorOf(rowValue) });
       else line += theme.style(String.fromCharCode(0x2800 + bits), { fg: theme.colors.dim, dim: onLine });
     }
     rows.push(line);
@@ -1177,6 +1198,9 @@ function renderBrailleChart(
 /**
  * Multi-row area chart (btop-style): one column per sample, grown from the bottom over
  * `height` rows with eighth-block resolution at the top edge of each bar.
+ *
+ * Colour is keyed to the *row*, not the sample, so the fill is a vertical hue gradient over
+ * the axis (see `renderBrailleChart`).
  */
 function renderAreaChart(
   values: (number | null)[],
@@ -1192,6 +1216,7 @@ function renderAreaChart(
   const pad = Math.max(0, width - shown.length);
   const rows: string[] = [];
   for (let row = height - 1; row >= 0; row--) {
+    const rowValue = (safeMax * (row + 0.5)) / height;
     let line = " ".repeat(pad);
     for (const value of shown) {
       if (value === null) {
@@ -1199,10 +1224,10 @@ function renderAreaChart(
         continue;
       }
       const total = clamp01(value / safeMax) * height;
-      if (total >= row + 1) line += theme.style("█", { fg: colorOf(value) });
+      if (total >= row + 1) line += theme.style("█", { fg: colorOf(rowValue) });
       else if (total > row) {
         const index = Math.max(0, Math.min(BLOCKS.length - 1, Math.round((total - row) * 8) - 1));
-        line += theme.style(BLOCKS[index], { fg: colorOf(value) });
+        line += theme.style(BLOCKS[index], { fg: colorOf(rowValue) });
       } else line += row === 0 ? dim(theme, "·") : " ";
     }
     rows.push(line);
@@ -1307,12 +1332,18 @@ function renderNormalHud(state: HudState, call: CallStats, d: Derived, now: numb
   const itlColorOf = (value: number) => severityColor(latencySeverity(value, medianItl), theme, mode);
   const leftLines = medianTtft !== undefined ? [medianTtft] : [];
   const rightLines = medianItl !== undefined ? [medianItl] : [];
+  // Braille packs two samples per character, the block chart one, so the two renderers want a
+  // different number of slots. Passing the braille count to the block chart used to show it
+  // `2 * width` left-aligned values while it only ever reads the last `width` of them — i.e. the
+  // half that is padding — so `graphStyle: "block"` drew empty TTFT and ITL histograms.
+  const leftSlots = settings.graphStyle === "braille" ? leftWidth * 2 : leftWidth;
+  const rightSlots = settings.graphStyle === "braille" ? rightWidth * 2 : rightWidth;
   const left = settings.graphStyle === "braille"
-    ? renderBrailleChart(toSlots(ttfts, leftWidth * 2, "left"), leftWidth, 4, ttftMax, ttftColorOf, theme, "left", leftLines)
-    : renderAreaChart(toSlots(ttfts, leftWidth * 2, "left"), leftWidth, 4, ttftMax, ttftColorOf, theme, leftLines);
+    ? renderBrailleChart(toSlots(ttfts, leftSlots, "left"), leftWidth, 4, ttftMax, ttftColorOf, theme, "left", leftLines)
+    : renderAreaChart(toSlots(ttfts, leftSlots, "left"), leftWidth, 4, ttftMax, ttftColorOf, theme, leftLines);
   const right = settings.graphStyle === "braille"
-    ? renderBrailleChart(toSlots(itls, rightWidth * 2, "left"), rightWidth, 4, itlMax, itlColorOf, theme, "left", rightLines)
-    : renderAreaChart(toSlots(itls, rightWidth * 2, "left"), rightWidth, 4, itlMax, itlColorOf, theme, rightLines);
+    ? renderBrailleChart(toSlots(itls, rightSlots, "left"), rightWidth, 4, itlMax, itlColorOf, theme, "left", rightLines)
+    : renderAreaChart(toSlots(itls, rightSlots, "left"), rightWidth, 4, itlMax, itlColorOf, theme, rightLines);
 
   const histTitle = (label: string, median: number | undefined, max: number, columnWidth: number) =>
     truncateToWidth(dim(theme, `${label}  med ${fmtMs(median)}  max ${fmtMs(max)}`), columnWidth, "…", true);

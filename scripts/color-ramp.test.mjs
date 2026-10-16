@@ -161,6 +161,147 @@ for (const colorMode of ["calm", "vivid"]) {
   }
 }
 
+/**
+ * Per-character foreground hue of a rendered line; `null` where the cell carries no colour.
+ * Dim greys (baseline dots, reference lines) are dropped: they are not the ramp.
+ */
+function cellHues(line) {
+  const cells = [];
+  const re = /\x1b\[([0-9;]*)m([^\x1b]*)/g;
+  let match;
+  let fg = null;
+  while ((match = re.exec(line))) {
+    const code = match[1];
+    if (code.startsWith("38;2;")) {
+      const [r, g, b] = code.split(";").slice(2).map(Number);
+      const { h, s } = colorToOkhsl(rgbColor(r, g, b));
+      fg = s >= 0.15 ? h : null;
+    } else if (code === "39" || code === "0" || code === "2") fg = null;
+    for (const _ of match[2]) cells.push(fg);
+  }
+  return cells;
+}
+
+/**
+ * The widest hue spread within any single chart row.
+ *
+ * This is the signature of *where* the gradient runs. The fill must be a function of the row
+ * (the magnitude at that height), so every coloured cell in one row shares a hue and the spread
+ * is 0. Colour taken from each sample's own value would instead vary across the row. The row
+ * with the most cells is used because it discriminates best: a row holding only the two or three
+ * tallest bars can look uniform under either scheme.
+ */
+function widestRowSpread(rows) {
+  let widest;
+  for (const cells of rows) {
+    const hues = cells.filter((cell) => cell !== null);
+    if (!widest || hues.length > widest.length) widest = hues;
+  }
+  if (!widest || widest.length < 2) return undefined;
+  return Math.max(...widest) - Math.min(...widest);
+}
+
+/** One chart's rows, keeping only the cells left of the `│` column divider. */
+function leftOfDivider(rows, lines) {
+  return rows.map((cells, i) => {
+    const divider = lines[i].replace(/\x1b\[[0-9;]*m/g, "").indexOf("│");
+    return divider > 0 ? cells.slice(0, divider) : cells;
+  });
+}
+
+async function renderedHud(colorMode, graphStyle) {
+  let t = 1_000_000;
+  const realNow = performance.now;
+  const realDate = Date.now;
+  performance.now = () => t;
+  Date.now = () => 1_700_000_000_000 + (t - 1_000_000);
+  try {
+    const handlers = new Map();
+    let widgetFactory;
+    const pi = {
+      on: (name, fn) => handlers.set(name, fn),
+      registerCommand: () => {},
+      registerEntryRenderer: () => {},
+      appendEntry: () => {},
+      getSettings: () => ({ "pi-metrics": { style: "normal", graphStyle, tpsWindow: 10, colorMode } }),
+      reload: async () => {},
+      log: () => {},
+    };
+    const ctx = {
+      isIdle: () => false,
+      hasUI: true,
+      mode: "tui",
+      ui: {
+        notify: () => {},
+        setStatus: () => {},
+        setWidget: (_k, content) => {
+          if (typeof content === "function") widgetFactory = content;
+        },
+      },
+    };
+    await factory(pi);
+    await handlers.get("session_start")({}, ctx);
+
+    // Throughput is ~1000/itl tok/s and TTFT is ~prefill, so both axes span their whole ramp.
+    const calls = [
+      [12, 20], [18, 40], [28, 120], [45, 200], [70, 320], [15, 500], [22, 800],
+      [12, 30], [18, 60], [28, 150], [45, 240], [70, 400], [15, 600],
+    ];
+    for (const [itl, prefill] of calls) {
+      const message = {
+        role: "assistant", provider: "test", model: "test-model", api: "openai-completions",
+        timestamp: Date.now(), durationMs: prefill + 400, stopReason: "stop", content: [],
+        usage: { input: 10, output: 40, cacheRead: 0, cacheWrite: 0, totalTokens: 50, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      };
+      t += 90;
+      await handlers.get("before_provider_request")({}, ctx);
+      t += 1;
+      await handlers.get("after_provider_response")({}, ctx);
+      await handlers.get("message_start")({ message }, ctx);
+      t += prefill;
+      for (let k = 0; k < 40; k++) {
+        await handlers.get("message_update")(
+          { message, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x".repeat(4), partial: message } },
+          ctx,
+        );
+        t += itl;
+      }
+      t += 20;
+      await handlers.get("message_end")({ message }, ctx);
+      t += 100;
+    }
+    t += 400;
+    assert.ok(widgetFactory, "the extension must register a widget");
+    return widgetFactory({ requestRender: () => {} }, theme).render(100).map(String);
+  } finally {
+    performance.now = realNow;
+    Date.now = realDate;
+  }
+}
+
+for (const colorMode of ["calm", "vivid"]) {
+  // Both renderers: the histogram is drawn by `renderBrailleChart` or `renderAreaChart`
+  // depending on `graphStyle`, and each has its own colour call site.
+  for (const graphStyle of ["braille", "block"]) {
+    const lines = await renderedHud(colorMode, graphStyle);
+    const text = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+
+    const histAt = text.findIndex((line) => /TTFT ms/.test(line));
+    assert.ok(histAt >= 0, `the ${graphStyle} HUD must contain the TTFT/ITL charts`);
+    const histRows = lines.slice(histAt + 1, histAt + 5);
+    // Only the left (TTFT) chart: the two charts have different medians, so a genuine vertical
+    // gradient gives them different hues in the same row.
+    const histSpread = widestRowSpread(leftOfDivider(histRows.map(cellHues), histRows));
+    if (histSpread === undefined || histSpread > 0.5) {
+      failures.push(
+        `${colorMode}/${graphStyle}: the TTFT fill is not a vertical gradient — the widest row ` +
+          `spans ${histSpread === undefined ? "too few coloured cells to tell" : `${histSpread.toFixed(0)}° of hue`}, ` +
+          `so colour is following the sample rather than the row`,
+      );
+    }
+  }
+}
+
 if (failures.length > 0) {
   console.error(failures.join("\n"));
   process.exit(1);

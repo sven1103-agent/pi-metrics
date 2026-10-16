@@ -142,14 +142,21 @@ configuration, not measurement, and printing them invited reading them as result
   is measurement (mean and p95); its right side is the chart's own axes — the recording
   window in seconds, then the tok/s ceiling, marked `auto` when derived from the session.
 - **colour** — one cool-to-hot hue ramp carries the value, so throughput and latency are
-  legible without comparing bar heights. The anchors run teal → green → amber → red, keyed to
-  `tpsFast` / `tpsGood` / `tpsBad` for throughput, and to the *ratio* to the session median for
-  latency: 3× the median is the warm end and a third of it the cool end, so both directions
-  saturate at the same multiplicative distance. The anchors are ordered so hue only ever moves
-  one way, and every step is interpolated in Oklch rather than RGB, so the midtones stay
-  saturated instead of passing through grey. `colorMode` picks how loud it is: `calm` keeps the
-  theme's own green/amber/red and desaturates them, `vivid` uses hand-picked saturated anchors,
-  `mono` drops hue entirely. `scripts/color-ramp.test.mjs` asserts the hue stays monotone.
+  legible without comparing bar heights. In the charts it is applied *vertically*: a bar is
+  filled by the magnitude at each row, so it reads as a gradient rather than a flat slab, and
+  a short (bad) bar keeps its own colour instead of vanishing into a cool base. The direction
+  is per chart, because "good" is up for throughput and down for latency — the TPS graph runs
+  teal at the top, the TTFT/ITL graphs teal at the bottom, turning over at the median line.
+  The anchors run teal → green → amber → red, keyed to `tpsFast` / `tpsGood` / `tpsBad` for
+  throughput, and to the *ratio* to the session median for latency: 3× the median is the warm
+  end and a third of it the cool end, so both directions saturate at the same multiplicative
+  distance. The anchors are ordered so hue only ever moves one way, and every step is
+  interpolated in Oklch rather than RGB, so the midtones stay saturated instead of passing
+  through grey. A braille cell holds one colour across its four sub-rows, so the fade steps
+  once per text row — four or five bands, not a continuous ramp. `colorMode` picks how loud it
+  is: `calm` keeps the theme's own green/amber/red and desaturates them, `vivid` uses
+  hand-picked saturated anchors, `mono` drops hue entirely. `scripts/color-ramp.test.mjs`
+  asserts the hue stays monotone.
 - **usage** — the provider's own `usage.output` once a call finishes, which replaces the
   character estimate and makes that call's throughput exact. The input/cache/reasoning split
   and the session cost are not repeated here: Pi's footer already shows both, and its cost
