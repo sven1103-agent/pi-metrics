@@ -16,7 +16,7 @@ The same session in `graphStyle: "block"`:
 <summary>A static frame, as text</summary>
 
 ```
- ─ pi-metrics · demo-model ──────────────────────────────────────────────── 3 calls · total $0.010 ─
+ ─ pi-metrics · demo-model ─────────────────────────────────────────────────────────────── 3 calls ─
  ○ waiting  ● writing  ‖ paused  ✔ done  [██████░░░░░░]  14.9 tok/s  (est)  30 tok  waiting 900ms
 
  TPS tok/s  ·  fast 100  ·  avg 32  ·  p95 79                                  20s  ·  max 100 auto
@@ -104,10 +104,10 @@ All optional, under the `pi-metrics` key in `~/.pi/agent/settings.json`:
 `braille` or `block`. `colorMode` is `calm`, `vivid` or `mono`. `tpsMax` is a fixed tok/s
 ceiling or `auto` (session p98, never below `tpsFast`). `charsPerToken` is `auto`
 (calibrate from this session) or a fixed characters-per-token divisor. `persist` appends a
-one-line card per call to the transcript. `cost` shows the finished call's spend on the
-HUD's first row and the running session total in the header, and controls the cost column in
-`/metrics report` and on the persisted card. It is hidden when the provider reports no cost,
-so a local model does not show `$0.0000`.
+one-line card per call to the transcript. `cost` adds a cost column to `/metrics report` and
+to the persisted card. It is deliberately not shown on the HUD: Pi's footer already carries a
+session cost total, and a second figure derived from assistant calls alone would disagree with
+it, because Pi's total also includes compaction and branch-summary usage.
 
 `placement` accepts `aboveEditor` / `belowEditor` and, because a natural guess is otherwise
 silently ignored, also `above` / `below`. A value that is unusable in any other way is
@@ -139,9 +139,10 @@ configuration, not measurement, and printing them invited reading them as result
   never reset per call so separate writing actions stay comparable. The title's left side
   is measurement (mean and p95); its right side is the chart's own axes — the recording
   window in seconds, then the tok/s ceiling, marked `auto` when derived from the session.
-- **usage** — output tokens as reported, plus cost when the provider reports it. The
-  provider's own `usage.output` replaces the character estimate once a call ends; the
-  input/cache/reasoning breakdown is not currently displayed.
+- **usage** — the provider's own `usage.output` once a call finishes, which replaces the
+  character estimate and makes that call's throughput exact. The input/cache/reasoning split
+  and the session cost are not repeated here: Pi's footer already shows both, and its cost
+  total includes compaction and branch-summary usage that this extension never sees.
 
 Latency uses the **median**, throughput the **mean**, and the difference is deliberate.
 Latency has a long right tail (cold connections, provider queueing) where single outliers

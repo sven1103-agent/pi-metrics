@@ -15,18 +15,19 @@
  *                                  some providers batch several tokens per delta.
  *   TTOUT  time to output end    — wall time of the whole response (E2E).
  *   tok/s  decode throughput     — output tokens / TTOUT.
- *   cost   provider-reported spend — on row 1 for the finished call, and the session total
- *                                  in the header. Only shown when the provider reports a
- *                                  non-zero amount; a local model or a provider that reports
- *                                  nothing simply omits it rather than printing $0.0000.
+ *
+ * Note what is deliberately NOT claimed here: the input/cache/reasoning token split and the
+ * session cost. Pi's own footer already shows those, and its cost total additionally includes
+ * compaction and branch-summary usage, which an extension observing `message_end` never sees.
+ * Repeating either would be redundant at best and a contradictory second number at worst.
  *
  * Rendering — a labelled panel above the editor by default. The top rule is the HUD's
  * outer edge (and names the model); the editor's own border closes it at the bottom,
  * so the block reads as one framed band instead of running into the transcript:
  *
- *   ─ pi-metrics · demo-model ──────────────────────────────────── 5 calls · total $0.021 ─
- *   ○ waiting  ● writing  ‖ paused  ✔ done  [████████████]  74.0 tok/s  (est)  22 tok
- *   TPS           ▇▄▂▃▃▃▂▂▃▂▂▂▂▂  · avg    23 tok/s · p95    79 tok/s  20s  ·  max 100 auto
+ *   ─ pi-metrics · demo-model ─────────────────────────────────────────────────── 5 calls ─
+ *   ○ waiting  ● writing  ‖ paused  ✔ done  [░░░░░░░░░░░░]  61.5 tok/s  (usage)  80 tok
+ *   TPS         ▇▄▃▃▃▃▂▂▂▂▂▂▂▄▄▂  · avg    26 tok/s · p95    62 tok/s  20s  ·  max 100 auto
  *   STATS  split 25/75 conn/prefill  med first 400ms  med ITL 22ms  p95 ITL 74ms  5 calls
  *   HIST TTFT ▆▃▅█▁                  400ms  │  ITL ▁▂▆█▁                  22ms  (5 calls)
  *
@@ -106,7 +107,7 @@
  *       "persist": false,             // append a one-line card per call to the transcript
  *       "timeline": true,
  *       "liveTimeline": true,
- *       "cost": true,                 // per-call cost on row 1 + session total in the header
+ *       "cost": true,                 // cost column in `/metrics report` (Pi's footer shows the session total)
  *       "style": "normal",             // "compact" | "normal"
  *       "graphStyle": "braille",       // "braille" | "block"
  *       "colorMode": "calm",           // "calm" | "vivid" | "mono"
@@ -373,18 +374,6 @@ interface HudState {
   /** Session-wide per-second token counts, across every call; never reset per call. */
   rateHistory: number[];
   /**
-   * Session spend, accumulated as calls finish. A running total rather than a sum over
-   * `calls`, because `calls` is capped at `history` for the HIST timeline — deriving the
-   * session figure from it would silently undercount once a session passes that many calls.
-   */
-  sessionCost: number;
-  /**
-   * Calls this session has recorded, independent of the `history` cap. The header pairs this
-   * with the session spend, so deriving it from the capped `calls` array would let a long
-   * session read "2 calls · total $0.010" — a count that contradicts the money beside it.
-   */
-  sessionCalls: number;
-  /**
    * Session-local calibration: characters observed and the provider-reported tokens they
    * produced. Used to derive `charsPerToken` for calls that report no usage, which is
    * strictly better than a fixed constant — measured over 39k real calls, a fixed 4
@@ -453,16 +442,6 @@ function fmtCost(cost: number | undefined, enabled: boolean): string | undefined
   if (cost < 0.01) return `$${cost.toFixed(4)}`;
   if (cost < 1) return `$${cost.toFixed(3)}`;
   return `$${cost.toFixed(2)}`;
-}
-
-/**
- * Provider-reported spend for one call, as a plain number, or 0 when it is absent or
- * unusable. A local model, or a provider that reports nothing, collapses to 0 so it renders
- * as nothing rather than as a `$0.0000` that looks like a measurement.
- */
-function callCost(call: CallStats): number {
-  const total = call.usage?.cost?.total;
-  return total !== undefined && Number.isFinite(total) && total > 0 ? total : 0;
 }
 
 function percentile(values: number[], fraction: number): number | undefined {
@@ -1006,10 +985,6 @@ function renderStateRow(call: CallStats, state: HudState, d: Derived, now: numbe
   segments.push(rate !== undefined ? theme.style(`${rate >= 100 ? rate.toFixed(0) : rate.toFixed(1)} tok/s`, { fg: severityColor(rateSeverity(rate, tpsGood, tpsBad, tpsFast), theme, mode) }) : dim(theme, call.live ? "… tok/s" : "– tok/s"));
   if (rate !== undefined || tokens !== undefined) segments.push(fromProvider ? dim(theme, "(usage)") : theme.fg("warning", "(est)"));
   if (tokens !== undefined) segments.push(theme.fg("muted", `${fmtTokens(tokens)} tok`));
-  // Only a finished call has a provider-reported cost; it is shown once known rather than as
-  // a placeholder, which would read as a measured zero.
-  const cost = state.settings.cost ? fmtCost(callCost(call), true) : undefined;
-  if (cost) segments.push(theme.fg("muted", cost));
   if (stalled && sinceToken !== undefined) segments.push(theme.fg("error", `waiting ${fmtMs(sinceToken)}`));
 
   return segments.join(dim(theme, "  "));
@@ -1063,12 +1038,7 @@ function renderStatsRow(state: HudState, theme: Theme): string {
   segments.push(theme.fg("text", `med first ${fmtMs(percentile(ttfts, 0.5))}`));
   segments.push(theme.fg("text", `med ITL ${fmtMs(percentile(itls, 0.5))}`));
   segments.push(theme.fg("text", `p95 ITL ${fmtMs(percentile(itls, 0.95))}`));
-  // Session scope, from the same counter the header uses. Taking this from `calls` (which is
-  // capped at `history`) would print a smaller number here than one line above — and, once the
-  // header carries the session spend, would read as "5 calls · total $0.027" over "2 calls".
-  // The medians above are still computed over the retained window, which is what `history` is
-  // for; at the default of 120 that window is the whole session unless it is unusually long.
-  segments.push(theme.fg("text", `${state.sessionCalls + (state.current ? 1 : 0)} call${state.sessionCalls + (state.current ? 1 : 0) === 1 ? "" : "s"}`));
+  segments.push(theme.fg("text", `${calls.length} call${calls.length === 1 ? "" : "s"}`));
   const error = calls.find((call) => call.error);
   if (error) segments.push(theme.fg("error", error.aborted ? "aborted" : "error"));
   return segments.join(dim(theme, "  "));
@@ -1202,12 +1172,9 @@ function renderAreaChart(
  */
 function renderHeader(state: HudState, width: number, theme: Theme): string {
   const call = state.current ?? state.calls[state.calls.length - 1];
-  const count = state.sessionCalls + (state.current ? 1 : 0);
+  const count = state.calls.length + (state.current ? 1 : 0);
   const left = `─ pi-metrics${call ? ` · ${shortModel(call.model)}` : ""} `;
-  // Session scope belongs in the header, which already carries the session call count, so the
-  // per-call figure on row 1 cannot be mistaken for a running total.
-  const cost = state.settings.cost ? fmtCost(state.sessionCost, true) : undefined;
-  const right = ` ${count} call${count === 1 ? "" : "s"}${cost ? ` · total ${cost}` : ""} ─`;
+  const right = ` ${count} call${count === 1 ? "" : "s"} ─`;
   const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
   const text = truncateToWidth(left + "─".repeat(gap) + right, width, "…");
   return theme.fg("borderMuted", text);
@@ -1535,8 +1502,6 @@ export default function piMetrics(pi: ExtensionAPI): void {
     rateHistory: [],
     calibrationChars: 0,
     calibrationTokens: 0,
-    sessionCost: 0,
-    sessionCalls: 0,
   };
 
   let tui: TUI | undefined;
@@ -1680,15 +1645,9 @@ export default function piMetrics(pi: ExtensionAPI): void {
         // Older session files or unexpected shapes: start with an empty timeline.
       }
       state.calls = restored.slice(-state.settings.history);
-      // Seeded from the persisted cards so a resumed session carries its spend forward. The
-      // restored history is itself capped at `history`, so this totals the retained calls.
-      state.sessionCost = restored.reduce((sum, call) => sum + callCost(call), 0);
-      state.sessionCalls = restored.length;
       state.nextId = (state.calls[state.calls.length - 1]?.id ?? 0) + 1;
     } else {
       state.calls = [];
-      state.sessionCost = 0;
-      state.sessionCalls = 0;
     }
 
     lastCtx = ctx;
@@ -1859,8 +1818,6 @@ export default function piMetrics(pi: ExtensionAPI): void {
 
     state.calls.push(call);
     if (state.calls.length > state.settings.history) state.calls = state.calls.slice(-state.settings.history);
-    state.sessionCost += callCost(call);
-    state.sessionCalls += 1;
 
     if (state.visible && ctx.hasUI && ctx.mode === "tui" && !tui) attachWidget(ctx);
     touch(ctx, true);
@@ -1969,8 +1926,6 @@ export default function piMetrics(pi: ExtensionAPI): void {
           state.current = undefined;
           state.nextId = 1;
           state.rateHistory = [];
-          state.sessionCost = 0;
-          state.sessionCalls = 0;
           touch(ctx, true);
           ctx.ui.notify("metrics history cleared", "info");
           return;

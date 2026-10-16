@@ -38,13 +38,7 @@ rename of them:
   does not write that file itself, because the extension API exposes no settings-write call
   and editing it underneath Pi's settings manager can drop unrelated keys. An unrecognised
   subcommand now warns instead of silently toggling the HUD.
-- `cost` is honoured, and now reaches the HUD. It was declared, defaulted and documented
-  but read by nothing in the live panel — the README advertised cost as a headline metric
-  while only `/metrics report` and the persisted card ever rendered it. The finished call's
-  spend now shows on the HUD's first row, and the running session total in the header. A
-  provider that reports no cost omits it rather than printing `$0.0000`, which would read as
-  a measured zero. The session total is accumulated as calls finish, not summed from the
-  retained call list, because that list is capped at `history` and a total derived from it
-  would silently undercount in a long session.
+- `cost` is honoured. It was declared, defaulted and documented, but read by nothing; it
+  now gates the cost column in `/metrics report` and on the persisted card.
 
 [0.1.0]: https://github.com/sven1103-agent/pi-metrics/releases/tag/v0.1.0
