@@ -25,9 +25,9 @@ jobs:
       matrix:
         pi: ["1.1.0", "1.2.0", "1.3.0"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -78,9 +78,9 @@ jobs:
       matrix:
         pi: ["0.99.2", "1.0.0", "1.0.4"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -115,19 +115,29 @@ jobs:
           echo "loaded on Pi ${{ matrix.pi }}"
 
       # Reported, not asserted. Before 1.1.0 the published typings are incomplete, so
-      # errors here are the documented lower bound — but the lane's own verdict is
-      # about the load path, so this must not fail the job. It reports the error count
-      # as evidence for the README floor instead of failing on a known limitation,
-      # and it never asserts that the errors exist (upstream may backport fixes).
+      # errors here describe the documented lower bound — but they are not defects in
+      # this repository, and tsc would otherwise raise each one as a `failure`
+      # annotation on the source file, making the repo look broken. Writing to a plain
+      # log and printing the summary keeps the evidence without the false alarm.
+      # It never asserts that errors exist, so an upstream backport that lowers the
+      # floor will not turn this lane red.
       - name: Typecheck against Pi ${{ matrix.pi }} (informational)
         run: |
           set +e
-          npx tsc --noEmit 2>&1 | tee tsc.log
+          # The runner image ships a TypeScript problem matcher that turns every
+          # `file(line,col): error TSxxxx` line into a failure annotation on the
+          # source file. These errors come from incomplete published typings in
+          # older Pi releases, not from this repository, so they must not be
+          # reported as repo failures. Drop the matcher, then summarize by code
+          # only — no file(line,col) shape in the output.
+          echo "::remove-matcher owner=tsc::"
+          npx tsc --noEmit --pretty false > tsc.log 2>&1
           errors=$(grep -c "error TS" tsc.log || true)
           echo "### Pi ${{ matrix.pi }}: $errors typecheck error(s)" >> "$GITHUB_STEP_SUMMARY"
           if [ "$errors" -eq 0 ]; then
-            echo "::notice::typechecks clean on ${{ matrix.pi }} — the README floor may be lower than 1.1.0"
+            echo "::notice::typechecks clean on Pi ${{ matrix.pi }} — the README floor may be lower than 1.1.0"
           else
-            echo "expected before 1.1.0: $errors error(s) from incomplete published typings"
+            echo "expected before Pi 1.1.0 — $errors error(s) from incomplete published typings:"
+            grep -o "error TS[0-9]*: .*" tsc.log | sort | uniq -c
           fi
           exit 0
