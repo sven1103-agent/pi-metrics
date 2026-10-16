@@ -1,4 +1,4 @@
-name: pi-compat
+name: Pi compatibility
 
 on:
   push:
@@ -65,13 +65,14 @@ jobs:
           fi
           echo "loaded on Pi ${{ matrix.pi }}"
 
-  # Informational lane: below the supported floor the published typings are
-  # known to be incomplete, so failures here are expected and must not gate.
-  # This documents the lower bound by evidence rather than by memory.
+  # Lower-bound lane: below 1.1.0 the published typings are incomplete. The load
+  # path still works, and that is the claim worth gating — so this lane asserts the
+  # load gate and merely *reports* typecheck errors as evidence for the README floor.
+  # It is deliberately not continue-on-error: if these versions stop loading, that is
+  # a real regression, not a known limitation.
   legacy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -93,10 +94,11 @@ jobs:
             "@earendil-works/pi-ai@${{ matrix.pi }}" \
             "@earendil-works/pi-tui@${{ matrix.pi }}"
 
-      - name: Typecheck against Pi ${{ matrix.pi }} (expected to fail before 1.1.0)
-        run: npx tsc --noEmit
-
-      - name: Load gate — should still pass, the type floor is not the runtime floor
+      # Load gate runs FIRST in this lane. The typecheck below is expected to fail
+      # before 1.1.0, and a failed step skips the rest of the job — which would mean
+      # the load path was never actually exercised. The README claims these versions
+      # load, so that claim has to be verified, not skipped.
+      - name: Load gate — should pass, the type floor is not the runtime floor
         env:
           PI_OFFLINE: "1"
           PI_SKIP_VERSION_CHECK: "1"
@@ -111,3 +113,21 @@ jobs:
             exit 1
           fi
           echo "loaded on Pi ${{ matrix.pi }}"
+
+      # Reported, not asserted. Before 1.1.0 the published typings are incomplete, so
+      # errors here are the documented lower bound — but the lane's own verdict is
+      # about the load path, so this must not fail the job. It reports the error count
+      # as evidence for the README floor instead of failing on a known limitation,
+      # and it never asserts that the errors exist (upstream may backport fixes).
+      - name: Typecheck against Pi ${{ matrix.pi }} (informational)
+        run: |
+          set +e
+          npx tsc --noEmit 2>&1 | tee tsc.log
+          errors=$(grep -c "error TS" tsc.log || true)
+          echo "### Pi ${{ matrix.pi }}: $errors typecheck error(s)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$errors" -eq 0 ]; then
+            echo "::notice::typechecks clean on ${{ matrix.pi }} — the README floor may be lower than 1.1.0"
+          else
+            echo "expected before 1.1.0: $errors error(s) from incomplete published typings"
+          fi
+          exit 0

@@ -1,5 +1,8 @@
 # pi-metrics
 
+[![CI](https://github.com/sven1103-agent/pi-metrics/actions/workflows/ci.yml/badge.svg)](https://github.com/sven1103-agent/pi-metrics/actions/workflows/ci.yml)
+[![Pi compatibility](https://github.com/sven1103-agent/pi-metrics/actions/workflows/pi-compat.yml/badge.svg)](https://github.com/sven1103-agent/pi-metrics/actions/workflows/pi-compat.yml)
+
 Live LLM latency HUD for the [Pi](https://pi.dev) coding agent: time to first token,
 inter-token latency, decode throughput and cost — for one call, and for the session.
 
@@ -85,17 +88,33 @@ one-line card per call to the transcript.
 
 Two different floors, because they are genuinely different:
 
-| | Range | How it is verified |
+| | Range | Verified by |
 |---|---|---|
-| **Typechecks clean** | Pi **1.1.0 – 1.3.0** | `tsc --noEmit` against each Pi release in CI |
-| **Loads** | Pi **≥ 0.85.1** | real `pi` binary loads the extension without error |
+| **Typechecks clean** | Pi **1.1.0 – 1.3.0** | `tsc --noEmit` per release |
+| **Loads** | Pi **≥ 0.85.1** | real `pi` binary, headless |
 
-Below Pi 1.1.0 the extension still loads but the published typings are incomplete, so
-it is not type-verified. It does not load at all before 0.85.1.
+Per-release status is checked in CI — each version is its own job, so the Checks tab
+names the exact version that broke:
 
-CI verifies typecheck and load. **Interactive rendering is verified manually** — the
-widget is TUI-only, so it cannot be exercised in a headless run. Do not read the CI
-badge as covering what the HUD looks like.
+| Pi | Typecheck | Loads |
+|---|---|---|
+| 1.3.0 | ✅ gating | ✅ gating |
+| 1.2.0 | ✅ gating | ✅ gating |
+| 1.1.0 | ✅ gating | ✅ gating |
+| 1.0.4, 1.0.0, 0.99.2 | ⚠️ errors reported, not asserted | ✅ gating |
+| < 0.85.1 | ❌ | ❌ does not load |
+
+Below Pi 1.1.0 the published typings are incomplete — the extension still loads, but it
+does not typecheck. In that lane CI runs the load gate as a real check and only
+*reports* the typecheck error count as evidence for the floor above; it never asserts
+that errors must be present, so an upstream backport lowers the floor without breaking
+the build.
+
+The `@earendil-works/pi-ai` peerDependency floor is `>=1.1.0`, matching the typecheck
+floor. The other two stay at `*` as Pi requires.
+
+**Interactive rendering is verified manually.** The widget is TUI-only, so a headless
+run cannot exercise it. Do not read these badges as covering what the HUD looks like.
 
 ## What it does not do
 
