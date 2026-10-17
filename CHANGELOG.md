@@ -2,11 +2,16 @@
 
 Notable changes per release. This project follows [Semantic Versioning](https://semver.org/).
 
+**`0.y.z` is initial development.** By SemVer, anything may change at any time in a major-zero
+release — behaviour, settings keys, the rendered layout, and the extension's exported surface —
+including in a patch. No version below `1.0.0` is a compatibility promise. `1.0.0` is the first
+release that will define a stable API, and it is the target being built towards.
+
 ## 0.1.0 — unreleased
 
 Not yet tagged: the date and the release link are added at that point.
 
-First public release.
+First public **development** release, not the stable one — see the note above.
 
 - Live HUD above or below the editor: per-call state, decode throughput, token count.
 - Session TPS timeline — tokens per second, one column per completed second, never

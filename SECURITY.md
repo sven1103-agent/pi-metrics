@@ -42,3 +42,7 @@ project; there is no formal SLA.
 ## Supported versions
 
 Security fixes target the latest release. Older versions are not backported.
+
+Before `1.0.0` the project is in initial development and versions move quickly, so in practice
+that means the newest `0.x` only. `1.0.0` is the first release with a compatibility promise; the
+support policy for older stable releases will be written then.

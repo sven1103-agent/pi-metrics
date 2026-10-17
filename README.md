@@ -55,6 +55,12 @@ Or pin a release from git:
 pi install git:github.com/sven1103-agent/pi-metrics@v0.1.0
 ```
 
+**Pre-1.0, so treat this as initial development.** Per Semantic Versioning, a `0.y.z`
+release makes no compatibility promise — behaviour, settings keys and the rendered layout can
+all change, in any version including a patch. `1.0.0` is the first release that will define a
+stable API, and it is the target this is being built towards. Until then, pin a tag if you need
+something that does not move.
+
 ## Commands
 
 | Command | Effect |
