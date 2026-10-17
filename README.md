@@ -4,6 +4,7 @@
 [![Pi compatibility](https://github.com/sven1103-agent/pi-metrics/actions/workflows/pi-compat.yml/badge.svg)](https://github.com/sven1103-agent/pi-metrics/actions/workflows/pi-compat.yml)
 [![npm](https://img.shields.io/npm/v/@sven1103-agent/pi-metrics)](https://www.npmjs.com/package/@sven1103-agent/pi-metrics)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/sven1103-agent/pi-metrics/badge)](https://scorecard.dev/viewer/?uri=github.com/sven1103-agent/pi-metrics)
+[![Socket Badge](https://badge.socket.dev/npm/package/@sven1103-agent/pi-metrics/latest)](https://socket.dev/npm/package/@sven1103-agent/pi-metrics/overview)
 
 Live LLM latency HUD for the [Pi](https://pi.dev) coding agent: time to first token,
 inter-token latency, decode throughput and cost — for one call, and for the session.
