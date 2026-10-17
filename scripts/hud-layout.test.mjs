@@ -95,11 +95,13 @@ assert.equal(failures.length, 0, `\n${failures.join("\n")}`);
 /**
  * The automatic ceiling must not chase a single outlier second.
  *
- * p98 is not a robust statistic at the sample counts this chart has: p98 of thirty seconds is
- * the second-highest, so one burst moved the ceiling and rescaled every other bar with it. A
- * measured session of nine seconds at 150 tok/s plus one at 900 went from a flat line along the
- * bottom (ceiling 1500) to a solid slab (ceiling = the bare median, 150) before headroom was
- * added. The assertion is that *growing the outlier does not move the axis at all*.
+ * p98 is not a robust statistic at the sample counts this chart has — `percentile` takes the
+ * nearest index, so p98 of ten seconds *is* the tenth — and one burst moved the ceiling and
+ * rescaled every other bar with it. p95 does not fix that either: it is still the maximum until
+ * about a dozen samples, and still returns an outlier when there are three in thirty seconds.
+ * The assertion is that *growing the outlier does not move the axis at all*, which p98 and p95
+ * both fail and p90 passes. A measured 9x150-plus-one-900 session went from a flat line along the
+ * bottom (ceiling 1500) to a readable chart (200).
  *
  * Rate R for one second is `R` four-character deltas 1000/R ms apart, so each per-second bucket
  * is exactly R and the second is exactly 1000 ms long.

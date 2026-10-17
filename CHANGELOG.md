@@ -49,15 +49,17 @@ rename of them:
   edge is a measurement, the cells below are a gradient. A braille cell carries one colour
   across four sub-rows, so the fade steps once per text row. The one-row sparklines in the
   persisted card keep the per-sample colour, the only thing a single row can show.
-- The automatic TPS ceiling is derived from the session **median**, doubled, instead of p98.
-  p98 is not robust at the sample counts this chart has — p98 of thirty seconds is the
-  second-highest — so one outlier second moved the ceiling and rescaled every other bar with
-  it: a measured 9-seconds-at-150-plus-one-at-900 session got a 1500 ceiling and rendered as a
-  flat line along the bottom. The median is unmoved by that, though a *bare* median swaps one
-  unreadable chart for another (the same session became a solid slab at ceiling 150), hence the
-  doubling, which puts the typical second at half height. Deliberate trade: a genuine peak now
-  exceeds the ceiling and renders at full height. `scripts/hud-layout.test.mjs` asserts that
-  growing the outlier does not move the axis at all.
+- The automatic TPS ceiling is derived from the session **p90** with headroom, instead of p98.
+  At the sample counts this chart has p98 *is* the maximum — `percentile` takes the nearest
+  index, so p98 of ten seconds is the tenth — so one outlier second moved the ceiling and
+  rescaled every other bar with it: a measured 9-seconds-at-150-plus-one-at-900 session got a
+  1500 ceiling and rendered as a flat line along the bottom. p95 does not fix that either; it is
+  still the maximum until about a dozen samples, and returns an outlier for three in thirty. p90
+  survives both, and a bimodal (half cached) session as well. The median was tried and rejected
+  for a different reason: it sits *on* a mode and jumps between them, so a small shift in the mix
+  swung its doubled value from 200 to 750. Deliberate trade: a genuine peak exceeds the ceiling
+  and renders at full height. `scripts/hud-layout.test.mjs` asserts that growing the outlier does
+  not move the axis at all — which p98 and p95 fail and p90 passes.
 - `graphStyle: "block"` actually draws its TTFT and ITL histograms. Both were handed the
   braille slot count (two samples per cell) while the block renderer only ever reads the last
   `width` slots — the padding half — so the two charts rendered empty, and the README's own

@@ -203,9 +203,9 @@ interface MetricsSettings {
   /** Seconds of history shown by the TPS chart. */
   tpsWindow?: number;
   /**
-   * Top of the TPS graph, in tok/s, or "auto" to derive it from the session's own median
-   * (doubled, and never below `tpsFast`). The median rather than a high percentile so one
-   * outlier second cannot rescale every other bar.
+   * Top of the TPS graph, in tok/s, or "auto" to derive it from the session's own p90 with a
+   * little headroom (never below `tpsFast`). An upper percentile rather than p98 because at the
+   * sample counts this chart has p98 *is* the maximum, so one outlier second rescaled everything.
    */
   tpsMax?: number | "auto";
   /**
@@ -705,30 +705,40 @@ function niceCeil(value: number): number {
  * llama.cpp and a 400 tok/s API: too high and the fast provider is a solid slab, too low
  * and a slow one looks pegged. So "auto" tracks the session.
  *
- * It tracks the session by its **median**, because a high percentile is not robust at the sample
- * counts this chart has. p98 of thirty seconds is the second-highest one, so a single outlier
- * second — a burst after a stall, a cached response — moved the ceiling and rescaled every other
- * bar with it. The median ignores that completely.
+ * It tracks the session's **p90**, with the `RATE_HEADROOM` above it. Both the statistic and the
+ * headroom were measured rather than guessed, over profiles of 10 and 30 seconds. Two things
+ * decided it:
  *
- * `RATE_HEADROOM` matters as much as the statistic. With a bare median the *typical* second sits
- * at the top of the chart and half the bars are pinned there, which trades one unreadable chart
- * for another: a measured 9-seconds-at-150-plus-one-at-900 session went from a flat line along
- * the bottom (ceiling 1500) to a solid slab (ceiling 150). Doubling it puts the typical second at
- * half height. The trade is real and deliberate: a genuine peak now exceeds the ceiling and
- * renders at full height, so the top of the chart reads "at or above typical" rather than
- * resolving the fast half.
+ *   - p98 is the *maximum* at these sample counts (`percentile` takes the nearest index, so p98 of
+ *     ten seconds is the tenth). One outlier second, and the ceiling followed it: a 9x150 plus
+ *     one-900 session got a 1500 ceiling and rendered as a flat line along the bottom, and a
+ *     one-9000 session got 15000.
+ *   - p95 does *not* fix that. It is still the maximum until about a dozen samples
+ *     (`round(9 * 0.95) === 9`), and with three outliers in thirty seconds it still returns one.
+ *     p90 survives the same three, and a bimodal session (half cached, half not) as well.
+ *
+ * The median is the other candidate and is rejected for a different reason than being too
+ * aggressive: for a bimodal session it sits *on* a mode and jumps between them, so a small shift
+ * in the mix swung its doubled value from 200 to 750. p90 barely moves.
+ *
+ * `RATE_HEADROOM` is what keeps the axis from clipping the typical value: a bare p90 put the
+ * typical second of the spikey profiles at the very top of the chart.
+ *
+ * On a smooth distribution every candidate agrees — all of them give 500 for a 100..400 ramp — so
+ * the choice only shows on spikey sessions, and the trade is deliberate: a genuine peak exceeds
+ * the ceiling and renders at full height, so the top of the chart reads "at or above typical".
  *
  * The `tpsFast` floor still applies, and still stops a slow session getting `max ≈ 30`: with it,
  * the `good` line can never sit higher than a third of the height, so "below the good line"
  * always reads as low.
  */
-const RATE_HEADROOM = 2;
+const RATE_HEADROOM = 1.15;
 
 function resolveRateMax(history: number[], setting: number | "auto", tpsFast: number): { max: number; auto: boolean } {
   const floor = Math.max(1, tpsFast);
   // A non-positive number is a typo, not a request for a 1 tok/s axis; treat it as auto.
   if (setting !== "auto" && Number.isFinite(setting) && setting > 0) return { max: setting, auto: false };
-  const middle = percentile(history, 0.5);
+  const middle = percentile(history, 0.9);
   if (middle === undefined || !(middle > 0)) return { max: niceCeil(floor), auto: true };
   return { max: Math.max(niceCeil(middle * RATE_HEADROOM), niceCeil(floor)), auto: true };
 }
