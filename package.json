@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Live LLM latency HUD for the Pi coding agent: TTFT, inter-token latency, throughput and cost.",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "author": {
     "name": "Sven Fillinger",
     "url": "https://github.com/sven1103"
