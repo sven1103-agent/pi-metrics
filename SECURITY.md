@@ -17,14 +17,24 @@ handles and renders latency figures in the terminal. Verified against the source
   appends ticker/render diagnostics to that file via `appendFileSync`. If the variable
   is unset — the default — nothing is written anywhere.
 - **No telemetry.** No usage, session content or metrics leave the machine.
+- **No dependencies of its own.** `package.json` declares no runtime `dependencies`, so
+  installing this package pulls in no third-party code at all. The three
+  `peerDependencies` are Pi's own packages, present already. `npm audit` therefore has no
+  dependency tree to report on for this package, and advisories can only ever come from
+  the build and test tooling, not from what you install.
 
 Session metrics live in memory only. The optional `persist` setting writes a one-line
 summary card into the Pi transcript, which is Pi's own session file.
 
 ## Reporting a vulnerability
 
-Open a [private security advisory](https://github.com/sven1103-agent/pi-metrics/security/advisories/new)
-or email the maintainer. Please do not open a public issue for anything exploitable.
+Open a [private security advisory](https://github.com/sven1103-agent/pi-metrics/security/advisories/new).
+That channel is private to you and the maintainer, and it is the one to use — please do not
+open a public issue for anything exploitable.
+
+The npm registry also carries the maintainer address if you would rather send mail than use
+GitHub — `npm view @sven1103-agent/pi-metrics maintainers` prints it. The npm package *page*
+shows the maintainer's username only, so the command is the way to get the address.
 
 Expect an acknowledgement within a few days. This is a small, single-maintainer
 project; there is no formal SLA.

@@ -202,7 +202,10 @@ cannot exercise it. Do not read these badges as covering what the HUD looks like
 ## What it does not do
 
 - It does not send anything anywhere. **No network calls, no telemetry, no credential
-  access.** See [SECURITY.md](SECURITY.md).
+  access.** See [SECURITY.md](https://github.com/sven1103-agent/pi-metrics/blob/main/SECURITY.md)
+  for the full scope, written against the source, and for how to report a problem privately.
+- It installs nothing. `package.json` declares no runtime `dependencies`, so adding this
+  package adds no code for you to audit — `npm audit` has no tree to report on for it.
 - It does not measure prompt tokens per second; it measures decode throughput.
 - It does not persist history across sessions unless `persist` is enabled.
 
