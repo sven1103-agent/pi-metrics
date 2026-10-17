@@ -25,24 +25,30 @@ rename of them:
   against 39,000 real calls.
 - `RATE` became `TPS`, and the `rate*` settings keys became `tps*`. The `rate*` names are
   still read as aliases.
-- `tpsFast` is the only threshold printed. `tpsGood` / `tpsBad` colour the HUD but are
-  configuration, not measurement, and printing them invited reading them as results.
-  The recording window and the chart ceiling now sit together on the right of the title.
-- Colour is one cool-to-hot hue ramp, not four bands. The `fast` anchor sits at teal (195°)
-  instead of green, so the healthy half is a hue sweep rather than a single green with only
-  saturation varying — a fast provider used to render as a flat green slab. Anchors stay
-  monotone (~195° → ~150° → 85° → 25°) and are mixed in Oklch, not RGB, so the midtones stay
-  saturated instead of passing through grey. `calm` keeps the theme's green/amber/red and
-  hue-shifts only `fast`; `vivid` uses the full hand-picked set; `mono` still has no hue.
-- The chart fill is a *vertical* hue gradient: colour follows the magnitude at each row rather
-  than the sample in each column, so bars read as gradients instead of flat slabs. Nothing is
-  lost — on a single-series plot a bar's height already is its value, so the top cell still
-  carries that bar's own colour, and short (bad) bars keep it rather than being hidden in the
-  cool base. The direction is per chart, since "good" is up for throughput and down for
-  latency: TPS runs teal at the top, TTFT/ITL teal at the bottom, turning over at the median
-  reference line. A braille cell carries one colour across four sub-rows, so the fade steps
-  once per text row (four or five bands). The one-row sparklines in the persisted card keep the
-  per-sample colour, the only thing a single row can show.
+- `tpsFast` is the only threshold printed. `tpsGood` / `tpsBad` are configuration, not
+  measurement, and printing them invited reading them as results; they now draw the chart's
+  reference lines. The recording window and the chart ceiling sit together on the right.
+- Colour is one cool-to-hot hue ramp, not four bands, and it is **relative rather than
+  absolute**. Severity is now the ratio to the session's own typical value for throughput as
+  well as latency, so an 8 tok/s local model and a 200 tok/s hosted one centre on the same
+  green; absolute tok/s thresholds pinned the first at "bad" and the second at "fast" forever.
+  `tpsGood` is the cold-start stand-in until the session has a few seconds of history, and
+  `tpsGood` / `tpsBad` / `tpsFast` are now what they look like on the chart: target lines.
+  The `fast` anchor sits at teal (195°) instead of green, so the healthy half is a hue sweep
+  rather than a single green with only saturation varying. Anchors stay monotone
+  (~195° → ~150° → ~100° → ~45°) and are mixed in Oklch, not RGB, so the midtones stay
+  saturated instead of passing through grey. Green-to-red read as harsh, so the yellow half of
+  the warm range now gets 70% of it and only the far end reaches red: `vivid` uses hand-picked
+  anchors, `calm` blends the theme's own red toward its warning, `mono` still has no hue.
+- The chart fill is a *vertical* gradient keyed to the **bar**, not to the axis: a bar's top
+  edge carries the colour of its own value and the fill fades toward the axis baseline below.
+  The previous version coloured each row from `max * (row + 0.5) / height`, which quietly made
+  the colour a function of the axis maximum — and that maximum moves on its own (auto ceiling,
+  running max, floored at `tpsFast`), so a slow provider had every bar crushed into the bottom
+  row in one colour and any rescale shifted the whole gradient. The honest cost: only the top
+  edge is a measurement, the cells below are a gradient. A braille cell carries one colour
+  across four sub-rows, so the fade steps once per text row. The one-row sparklines in the
+  persisted card keep the per-sample colour, the only thing a single row can show.
 - `graphStyle: "block"` actually draws its TTFT and ITL histograms. Both were handed the
   braille slot count (two samples per cell) while the block renderer only ever reads the last
   `width` slots — the padding half — so the two charts rendered empty, and the README's own
@@ -52,7 +58,9 @@ rename of them:
   session median the same green: 3× the median was red, but a tenth of it was no cooler than
   the median, and the new `fast` anchor changed nothing for the histogram charts. It is now
   `-1` at a third of the median and `+1` at 3×, saturating at the same multiplicative distance
-  in both directions. `scripts/color-ramp.test.mjs` pins the order.
+  in both directions, and throughput uses the same scale with the sign flipped.
+  `scripts/color-ramp.test.mjs` pins the order, the reach, the scale-invariance and the
+  gradient fill.
 - The chart title protects the axis under truncation: on a narrow terminal the stats give
   way, not the scale.
 - `placement` works as documented. Pi compares the value against `belowEditor` exactly and

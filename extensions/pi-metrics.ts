@@ -26,10 +26,10 @@
  * so the block reads as one framed band instead of running into the transcript:
  *
  *   ─ pi-metrics · demo-model ─────────────────────────────────────────────────── 5 calls ─
- *   ○ waiting  ● writing  ‖ paused  ✔ done  [░░░░░░░░░░░░]  61.5 tok/s  (usage)  80 tok
- *   TPS         ▇▄▃▃▃▃▂▂▂▂▂▂▂▄▄▂  · avg    26 tok/s · p95    62 tok/s  20s  ·  max 100 auto
- *   STATS  med conn/pre 100ms/300ms  med first 400ms  med ITL 22ms  p95 ITL 74ms  5 calls
- *   HIST TTFT ▆▃▅█▁                  400ms  │  ITL ▁▂▆█▁                  22ms  (5 calls)
+ *   ○ waiting  ● writing  ‖ paused  ✔ done  [░░░░░░░░░░░░]  66.7 tok/s  (usage)  80 tok
+ *   TPS        ▇▄▃▃▃▃▂▂▂▁▂▁▁▁▃▄▂  · avg    23 tok/s · p95    62 tok/s  20s  ·  max 100 auto
+ *   STATS  med conn/pre 100ms/300ms  med first 400ms  med ITL 22ms  p95 ITL 139ms  5 calls
+ *   HIST TTFT ▆▁▃█▁                  400ms  │  ITL ▁▂▃█▁                  22ms  (5 calls)
  *
  * The layout never changes: row 1 always shows every state with the active one
  * highlighted, so there is nothing to re-read mid-response.
@@ -39,23 +39,34 @@
  *   ✔ done      the call finished; the values freeze
  *
  * The pressure bar is throughput against the TPS scale (full at the `good` baseline).
- * Colour is one cool-to-hot hue ramp over four anchors, keyed to `tpsFast` (100),
- * `tpsGood` (30) and `tpsBad` (15): teal at `tpsFast`, green at `tpsGood`, amber at
- * `tpsBad`, red below it. Hue moves monotonically (~195° → ~150° → 85° → 25°) so no hue
- * is crossed twice, and every step is interpolated in Oklch rather than RGB, so the midtones
- * stay saturated instead of passing through grey.
  *
- * In the *charts* the ramp is applied **vertically** — colour follows the magnitude at each
- * row, not the sample in each column — so a bar is a gradient rather than a flat slab. This
- * loses nothing, because on a single-series plot the bar's height already is its value, so the
- * top cell of a bar still carries that bar's own colour; short (bad) bars keep it too, instead
- * of being hidden in the cool base. The direction is per chart, because "good" is up for
- * throughput and down for latency: the TPS graph runs teal at the top, the TTFT/ITL graphs run
- * teal at the bottom. There the neutral point is the session median, so the ramp turns over
- * exactly where the median reference line is drawn. A braille cell holds one foreground colour
- * across its four sub-rows, so the fade steps once per text row: four or five bands, not a
- * continuous ramp. (The one-line sparklines in the persisted card are a single row tall and
- * keep the per-sample colour, which is the only thing a single row can show.)
+ * Colour is one cool-to-hot hue ramp over four anchors — teal, green, yellow, dull red — and it
+ * is **relative, not absolute**: severity is the ratio to the session's own typical value, so the
+ * same palette means the same thing on a 8 tok/s local model and a 200 tok/s hosted one. Absolute
+ * tok/s thresholds used to key it, which pinned a slow provider at "bad" and a fast one at
+ * "fast" forever. `tpsGood` is only the cold-start stand-in, used until a few seconds of history
+ * exist; after that the session answers for itself. `tpsGood` / `tpsBad` / `tpsFast` remain what
+ * they look like on the chart: target lines, not colour thresholds.
+ *
+ * Latency is relative the same way, and always was — to the session median. Both scales are
+ * symmetric in the ratio, so they saturate at the same multiplicative distance either side:
+ * a third of typical is −1, typical is 0, three times typical is +1. Hue moves monotonically
+ * along the ramp (~195° → ~150° → ~100° → ~45°) so no hue is crossed twice, and every step is
+ * interpolated in Oklch rather than RGB, so the midtones stay saturated instead of passing
+ * through grey. Green-to-red read as harsh, so the yellow half of the warm range gets 70% of it
+ * and only the far end reaches red.
+ *
+ * In the *charts* the ramp is applied **vertically**: a bar's top edge carries the colour of its
+ * own value, and below that the fill fades toward the axis baseline's colour. The gradient is
+ * keyed to the **bar**, not to the axis — an earlier version coloured each row from
+ * `max * (row + 0.5) / height`, which quietly made the colour a function of the axis maximum,
+ * and that maximum moves on its own (auto ceiling, running max, floored at `tpsFast`). A slow
+ * provider had every bar crushed into the bottom row in one colour, and any rescale shifted the
+ * whole gradient. The honest cost: only the top edge is a measurement; the cells below it are a
+ * gradient, not a reading of the speed at that height. A braille cell holds one foreground
+ * colour across its four sub-rows, so the fade steps once per text row: four or five bands, not
+ * a continuous ramp. (The one-row sparklines in the persisted card have no room to fade and keep
+ * the per-sample colour.)
  *
  * The bar empties once writing stops. Those
  * thresholds are deliberately *not* printed: they are configuration, not measurement, and
@@ -135,9 +146,9 @@
  *       "colorMode": "calm",           // "calm" | "vivid" | "mono"
  *       "tpsWindow": 120,             // seconds of history in the TPS chart
  *       "tpsMax": "auto",            // "auto" (session p98, floor `tpsFast`) or a fixed tok/s
- *       "tpsGood": 30,               // at/above this = good (green)
- *       "tpsBad": 15,                // below this = bad (red); 15-30 is the amber band
- *       "tpsFast": 100,              // at/above this = fast (excellent)
+ *       "tpsGood": 30,               // target line; also the cold-start colour baseline
+ *       "tpsBad": 15,                // target line, drawn on the chart
+ *       "tpsFast": 100,              // target line; floors the automatic chart ceiling
  *       "charsPerToken": "auto"       // "auto" (calibrate from this session) or a fixed divisor
  *     }
  *   }
@@ -196,11 +207,15 @@ interface MetricsSettings {
    * the session's own p98 (never below `tpsFast`, so a slow provider is not zoomed in).
    */
   tpsMax?: number | "auto";
-  /** "Good" threshold: at or above this TPS is green, below it ramps through amber. */
+  /**
+   * The "good" target: fills the pressure bar, and stands in as the colour baseline until the
+   * session has a few seconds of its own history to take over. It is deliberately *not* an
+   * absolute colour threshold — see the header note on relative colouring.
+   */
   tpsGood?: number;
-  /** "Bad" threshold: below this TPS is red; `tpsBad`..`tpsGood` is the amber band. */
+  /** The "bad" target, drawn as a reference line on the TPS chart. */
   tpsBad?: number;
-  /** "Fast" threshold: at or above this TPS reads as excellent. */
+  /** The "fast" target, also the floor the automatic chart ceiling can never go below. */
   tpsFast?: number;
   /**
    * Fallback divisor for estimating tokens from streamed characters when the provider
@@ -500,23 +515,39 @@ function shortModel(model: string): string {
 }
 
 /**
- * Severity of a latency value against the session median. The scale is symmetric in the
- * *ratio* to the median, so both directions saturate at the same multiplicative distance:
+ * Severity from a *ratio* to the session's own typical value. Symmetric in the ratio, so both
+ * directions saturate at the same multiplicative distance:
  *
- *   median/3   median/2   median   2x median   3x median
- *   -1         -0.5       0        +0.5        +1
- *   teal       cool       green    amber       red
+ *   ratio 1/3   1/2   1   2   3
+ *   -1          -0.5  0   +0.5  +1
  *
- * Provider-independent: it never needs a per-model scale. The below-median half used to be
- * clamped to 0, which made "at or below the median" one flat green and left the cool end of
- * the ramp unreachable — the histogram charts could never show a hue gradient, only the TPS
- * chart could.
+ * Relative rather than absolute is what lets one palette cover every setup: a local model at
+ * 8 tok/s and a hosted one at 200 tok/s both centre on the same green, instead of the first
+ * pinning at "bad" and the second at "fast" forever. Absolute thresholds also meant the
+ * *axis maximum* decided the colour, because the chart samples this per row.
  */
-function latencySeverity(value: number, medianValue: number | undefined): number {
-  if (medianValue === undefined || !(medianValue > 0) || !(value > 0)) return 0;
-  const ratio = value / medianValue;
+function ratioSeverity(ratio: number): number {
+  if (!(ratio > 0)) return 0;
   const severity = ratio >= 1 ? (ratio - 1) / 2 : -(1 / ratio - 1) / 2;
   return severity < -1 ? -1 : severity > 1 ? 1 : severity;
+}
+
+/** Latency severity: slower is worse, so the ratio is used as-is. */
+function latencySeverity(value: number, medianValue: number | undefined): number {
+  if (medianValue === undefined || !(medianValue > 0) || !(value > 0)) return 0;
+  return ratioSeverity(value / medianValue);
+}
+
+/**
+ * Throughput severity: faster is *better*, so the sign flips. A writing second that produced
+ * nothing is the one case that is worse than "very slow ratio" — it saturates at +1 rather than
+ * reporting a ratio of zero, which would otherwise read as "neutral".
+ */
+function rateSeverity(rate: number | undefined, baseline: number): number {
+  if (rate === undefined) return 0;
+  if (!(rate > 0)) return 1;
+  if (!(baseline > 0)) return 0;
+  return -ratioSeverity(rate / baseline);
 }
 
 const BLOCKS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
@@ -570,15 +601,23 @@ interface Ramp {
  * it the whole healthy half of the ramp is one green, with only saturation varying, so a
  * fast provider renders as a flat green slab. Every other anchor keeps a hue the theme (or
  * the vivid table) already supplies; `fast` is the one that has to move for the ramp to be
- * a gradient. Chosen so the sequence stays monotone: 195 -> ~150 -> 85 -> 25.
+ * a gradient. Chosen so the sequence stays monotone: 195 -> ~145 -> ~100 -> ~45.
  */
 const FAST_HUE = 195; // teal / cyan
+
+/**
+ * Where the yellow-to-red stretch begins. Green-to-red is harsh read at a glance, so the
+ * green..yellow half gets 70% of the warm range and only the last 30% runs yellow..dull red —
+ * i.e. the red is reserved for a value that is *far* off the session's own norm, which is what
+ * "clearly bad" should mean.
+ */
+const WARM_KNEE = 0.7;
 
 /** Vivid ramp anchors, hand-picked (excellent -> good -> mid -> bad). */
 const VIVID_FAST = { hue: FAST_HUE, sat: 0.8, light: 0.66 };
 const VIVID_GOOD = { hue: 145, sat: 0.62, light: 0.64 };
-const VIVID_OK = { hue: 85, sat: 0.95, light: 0.68 };
-const VIVID_BAD = { hue: 25, sat: 0.95, light: 0.6 };
+const VIVID_OK = { hue: 100, sat: 0.9, light: 0.7 }; // yellow
+const VIVID_BAD = { hue: 42, sat: 0.62, light: 0.58 }; // dull orange-red, not the old alarm red
 
 function rampFor(theme: Theme, mode: ColorMode): Ramp {
   if (mode === "mono") {
@@ -598,13 +637,15 @@ function rampFor(theme: Theme, mode: ColorMode): Ramp {
       bad: okhslColor(VIVID_BAD.hue, VIVID_BAD.sat, VIVID_BAD.light),
     };
   }
-  // calm: the theme's own semantics, desaturated, and hue-shifted *only* at `fast` (see
-  // FAST_HUE) — that one cool anchor is what turns the healthy half into a gradient.
+  // calm: the theme's own semantics, desaturated, and shifted *only* where the ramp needs it —
+  // `fast` is hue-moved to the shared cool anchor, and `bad` is blended off the theme's red
+  // toward its own warning so the warm end is a dull orange rather than an alarm red. Both stay
+  // inside the palette the theme already supplies rather than inventing hues.
   return {
     fast: withHue(tint(theme.colors.success, 1.0), FAST_HUE),
     good: tint(theme.colors.success, 0.55),
-    ok: tint(theme.colors.warning, 0.7),
-    bad: tint(theme.colors.error, 1.0),
+    ok: tint(mixColors(theme.colors.warning, theme.colors.success, 0.2), 0.85),
+    bad: tint(mixColors(theme.colors.error, theme.colors.warning, 0.4), 0.85),
   };
 }
 
@@ -620,31 +661,27 @@ function severityColor(severity: number, theme: Theme, mode: ColorMode): Color {
   const t = Math.max(-1, Math.min(1, severity));
   const ramp = rampFor(theme, mode);
   if (t <= 0) return mixColors(ramp.good, ramp.fast, -t); // 0 good … -1 fast
-  if (t <= 0.5) return mixColors(ramp.good, ramp.ok, t * 2); // 0 good … 0.5 ok
-  return mixColors(ramp.ok, ramp.bad, (t - 0.5) * 2); // 0.5 ok … 1 bad
+  if (t <= WARM_KNEE) return mixColors(ramp.good, ramp.ok, t / WARM_KNEE); // 0 good … knee ok
+  return mixColors(ramp.ok, ramp.bad, (t - WARM_KNEE) / (1 - WARM_KNEE)); // knee ok … 1 bad
 }
 
 /**
- * Severity of a throughput value, as four regions of one ramp:
+ * The throughput a colour is judged against: this session's own median once it has a few
+ * seconds of history, and `tpsGood` before that.
  *
- *   rate >= fast          -> -1           (excellent)
- *   good <= rate < fast   -> 0 … -1       (healthy; cooler as it approaches fast)
- *   bad  <= rate < good   -> 0 … +0.5     (amber region; the "slower than baseline" zone)
- *   rate <  bad           -> +0.75 … +1   (clearly bad)
- *
- * The old mapping was a single `1 - rate/good` below the good baseline, which put a rate
- * of half the baseline at severity 0.5 — visually "half good" rather than "halfway to
- * bad" — and gave the caller no way to say where "bad" actually starts.
+ * `tpsGood` is the documented expectation for a healthy provider, which makes it the right
+ * cold-start stand-in, and it keeps the setting meaningful instead of dead. After warm-up the
+ * session answers for itself — that switch is the whole point of colouring relatively, and it
+ * is why `tpsGood` / `tpsBad` are no longer colour thresholds (they remain the target lines
+ * drawn on the chart, and `tpsGood` still fills the pressure bar).
  */
-function rateSeverity(rate: number | undefined, good: number, bad: number, fast: number): number {
-  if (rate === undefined) return 0;
-  const goodAt = Math.max(1, good);
-  const fastAt = Math.max(goodAt + 1, fast);
-  const badAt = Math.max(1, Math.min(bad, goodAt));
-  if (rate >= fastAt) return -1;
-  if (rate >= goodAt) return -(rate - goodAt) / (fastAt - goodAt);
-  if (rate >= badAt) return (0.5 * (goodAt - rate)) / Math.max(1e-9, goodAt - badAt);
-  return 0.75 + 0.25 * Math.min(1, (badAt - rate) / Math.max(1, badAt));
+const MIN_RATE_SAMPLES = 4;
+
+function rateBaseline(state: HudState): number {
+  const { tpsGood } = state.settings;
+  if (state.rateHistory.length < MIN_RATE_SAMPLES) return tpsGood;
+  const median = percentile(state.rateHistory, 0.5);
+  return median !== undefined && median > 0 ? median : tpsGood;
 }
 
 /**
@@ -804,14 +841,14 @@ function buildSessionRateTrace(state: HudState, columns: number, windowSeconds: 
 }
 
 /** Block chart on a linear scale; taller = faster, colour = healthy (green) → slow (red). */
-function sparklineRate(values: (number | null)[], scale: readonly [number, number], good: number, bad: number, fast: number, theme: Theme, mode: ColorMode): string {
+function sparklineRate(values: (number | null)[], scale: readonly [number, number], baseline: number, theme: Theme, mode: ColorMode): string {
   const span = Math.max(1, scale[1] - scale[0]);
   return values
     .map((value) => {
       if (value === null) return " ";
       const t = clamp01((value - scale[0]) / span);
       const glyph = BLOCKS[Math.min(BLOCKS.length - 1, Math.max(0, Math.round(t * (BLOCKS.length - 1))))];
-      return theme.style(glyph, { fg: severityColor(rateSeverity(value, good, bad, fast), theme, mode) });
+      return theme.style(glyph, { fg: severityColor(rateSeverity(value, baseline), theme, mode) });
     })
     .join("");
 }
@@ -984,11 +1021,14 @@ function stateStrip(active: LiveState, theme: Theme, mode: ColorMode): string {
 }
 
 /** Fixed-width gauge: filled = rate / max; colour by severity (quiet when fast). */
-function pressureBar(rate: number | undefined, cells: number, good: number, bad: number, fast: number, theme: Theme, mode: ColorMode): string {
-  // A gauge for "are we at the good baseline?": full once the good threshold is reached.
+function pressureBar(rate: number | undefined, cells: number, good: number, baseline: number, theme: Theme, mode: ColorMode): string {
+  // A gauge for "are we at the good baseline?": full once the good threshold is reached. The
+  // *length* stays keyed to the configured `tpsGood` (a target), while the colour is relative to
+  // the session — the bar answers "am I at my target?", the colour answers "how does this
+  // compare to what this provider normally does?".
   const fill = rate !== undefined ? clamp01(rate / Math.max(1, good)) : 0;
   const filled = Math.max(0, Math.min(cells, Math.round(fill * cells)));
-  return `${dim(theme, "[")}${theme.style("█".repeat(filled), { fg: severityColor(rateSeverity(rate, good, bad, fast), theme, mode) })}${dim(theme, "░".repeat(cells - filled))}${dim(theme, "]")}`;
+  return `${dim(theme, "[")}${theme.style("█".repeat(filled), { fg: severityColor(rateSeverity(rate, baseline), theme, mode) })}${dim(theme, "░".repeat(cells - filled))}${dim(theme, "]")}`;
 }
 
 /**
@@ -1039,9 +1079,10 @@ function renderStateRow(call: CallStats, state: HudState, d: Derived, now: numbe
   const segments: string[] = [stateStrip(active, theme, state.settings.colorMode)];
   // Pressure is a live signal: it falls back to empty once writing stops.
   const mode = state.settings.colorMode;
-  const { tpsGood, tpsBad, tpsFast } = state.settings;
-  segments.push(pressureBar(call.live ? rate : undefined, 12, tpsGood, tpsBad, tpsFast, theme, mode));
-  segments.push(rate !== undefined ? theme.style(`${rate >= 100 ? rate.toFixed(0) : rate.toFixed(1)} tok/s`, { fg: severityColor(rateSeverity(rate, tpsGood, tpsBad, tpsFast), theme, mode) }) : dim(theme, call.live ? "… tok/s" : "– tok/s"));
+  const { tpsGood } = state.settings;
+  const baseline = rateBaseline(state);
+  segments.push(pressureBar(call.live ? rate : undefined, 12, tpsGood, baseline, theme, mode));
+  segments.push(rate !== undefined ? theme.style(`${rate >= 100 ? rate.toFixed(0) : rate.toFixed(1)} tok/s`, { fg: severityColor(rateSeverity(rate, baseline), theme, mode) }) : dim(theme, call.live ? "… tok/s" : "– tok/s"));
   if (rate !== undefined || tokens !== undefined) segments.push(fromProvider ? dim(theme, "(usage)") : theme.fg("warning", "(est)"));
   if (tokens !== undefined) segments.push(theme.fg("muted", `${fmtTokens(tokens)} tok`));
   if (stalled && sinceToken !== undefined) segments.push(theme.fg("error", `waiting ${fmtMs(sinceToken)}`));
@@ -1129,16 +1170,36 @@ function toSlots(values: number[], slots: number, align: "left" | "right" = "rig
 }
 
 /**
+ * How far a bar's fill fades toward the axis baseline over its own height. See `fillColor`.
+ */
+const FILL_FADE = 0.75;
+
+/** 0 at the top of a bar, 1 at the baseline; `top` and `mid` are in the same units. */
+function depthFromTop(top: number, mid: number): number {
+  return top > 0 ? clamp01((top - mid) / top) : 0;
+}
+
+/**
+ * Fill colour for one cell of a bar.
+ *
+ * The top edge is the bar's own colour, so the measurement is what the eye reads first; below it
+ * the fill fades toward the axis baseline's colour. Deliberately keyed to the *bar*, not to the
+ * axis: the previous version coloured each row from `max * (row + 0.5) / height`, which made the
+ * colour a function of the axis maximum — and the axis moves on its own (auto ceiling, running
+ * max in the histograms) and is floored at `tpsFast`, so a slow provider had every bar crushed
+ * into the bottom row and one colour, and any rescale shifted the whole gradient.
+ *
+ * The cost is honest and worth stating: only the top edge carries the measurement. The cells
+ * below it are a gradient, not a per-cell reading of speed at that height.
+ */
+function fillColor(barColor: Color, baseColor: Color, depth: number): Color {
+  return mixColors(barColor, baseColor, FILL_FADE * depth);
+}
+
+/**
  * Braille area chart: each character cell is a 2x4 dot matrix, so one text row carries
  * four levels of height and the bars read as stacked dots. Two samples share a cell,
  * giving 2x the horizontal resolution of the block chart for the same width.
- *
- * Colour depends on the *row*, not on the sample: the fill is a vertical hue gradient
- * spanning the axis, so a bar is tinted by the magnitude at each height rather than being a
- * flat slab of one colour. The top of a bar therefore still carries that bar's own severity
- * colour, and a short (bad) bar keeps it too instead of being lost in the cool base. A braille
- * cell holds a single foreground colour over four sub-rows, so the gradient steps once per
- * text row: four or five bands, not a continuous ramp.
  */
 function renderBrailleChart(
   values: (number | null)[],
@@ -1149,6 +1210,7 @@ function renderBrailleChart(
   theme: Theme,
   align: "left" | "right" = "right",
   thresholds: number[] = [],
+  baseColor?: Color,
 ): string[] {
   const safeMax = Math.max(1, max);
   const slots = columns * 2;
@@ -1156,18 +1218,20 @@ function renderBrailleChart(
   const offset = align === "left" ? 0 : Math.max(0, slots - shown.length);
   const rows: string[] = [];
   for (let row = height - 1; row >= 0; row--) {
-    // Mid-height magnitude of this text row: what the gradient is keyed to.
-    const rowValue = (safeMax * (row + 0.5)) / height;
     let line = "";
     for (let column = 0; column < columns; column++) {
       let bits = 0;
       let hasBar = false;
+      let worst: number | undefined;
+      let topmost = 0;
       for (let half = 0; half < 2; half++) {
         const index = column * 2 + half - offset;
         if (index < 0 || index >= shown.length) continue;
         const value = shown[index];
         if (value === null) continue;
+        if (worst === undefined || value > worst) worst = value;
         const filled = clamp01(value / safeMax) * height * 4; // sub-rows from the bottom
+        if (filled > topmost) topmost = filled;
         for (let sub = 0; sub < 4; sub++) {
           if (filled > row * 4 + sub) {
             bits |= BRAILLE_DOTS[half][sub];
@@ -1187,8 +1251,12 @@ function renderBrailleChart(
         }
       }
       if (bits === 0) line += row === 0 ? dim(theme, "⠂") : " ";
-      else if (hasBar) line += theme.style(String.fromCharCode(0x2800 + bits), { fg: colorOf(rowValue) });
-      else line += theme.style(String.fromCharCode(0x2800 + bits), { fg: theme.colors.dim, dim: onLine });
+      else if (hasBar) {
+        const bar = colorOf(worst ?? 0);
+        const depth = depthFromTop(topmost, row * 4 + 1.5);
+        const fg = baseColor ? fillColor(bar, baseColor, depth) : bar;
+        line += theme.style(String.fromCharCode(0x2800 + bits), { fg });
+      } else line += theme.style(String.fromCharCode(0x2800 + bits), { fg: theme.colors.dim, dim: onLine });
     }
     rows.push(line);
   }
@@ -1197,10 +1265,8 @@ function renderBrailleChart(
 
 /**
  * Multi-row area chart (btop-style): one column per sample, grown from the bottom over
- * `height` rows with eighth-block resolution at the top edge of each bar.
- *
- * Colour is keyed to the *row*, not the sample, so the fill is a vertical hue gradient over
- * the axis (see `renderBrailleChart`).
+ * `height` rows with eighth-block resolution at the top edge of each bar. Colour follows
+ * `fillColor`: the bar's own colour at the top edge, fading toward the baseline below it.
  */
 function renderAreaChart(
   values: (number | null)[],
@@ -1210,13 +1276,13 @@ function renderAreaChart(
   colorOf: (value: number) => Color,
   theme: Theme,
   thresholds: number[] = [],
+  baseColor?: Color,
 ): string[] {
   const safeMax = Math.max(1, max);
   const shown = values.slice(-width);
   const pad = Math.max(0, width - shown.length);
   const rows: string[] = [];
   for (let row = height - 1; row >= 0; row--) {
-    const rowValue = (safeMax * (row + 0.5)) / height;
     let line = " ".repeat(pad);
     for (const value of shown) {
       if (value === null) {
@@ -1224,10 +1290,11 @@ function renderAreaChart(
         continue;
       }
       const total = clamp01(value / safeMax) * height;
-      if (total >= row + 1) line += theme.style("█", { fg: colorOf(rowValue) });
+      const shade = (bar: Color) => (baseColor ? fillColor(bar, baseColor, depthFromTop(total, row + 0.5)) : bar);
+      if (total >= row + 1) line += theme.style("█", { fg: shade(colorOf(value)) });
       else if (total > row) {
         const index = Math.max(0, Math.min(BLOCKS.length - 1, Math.round((total - row) * 8) - 1));
-        line += theme.style(BLOCKS[index], { fg: colorOf(rowValue) });
+        line += theme.style(BLOCKS[index], { fg: shade(colorOf(value)) });
       } else line += row === 0 ? dim(theme, "·") : " ";
     }
     rows.push(line);
@@ -1307,11 +1374,17 @@ function renderNormalHud(state: HudState, call: CallStats, d: Derived, now: numb
     .filter((part): part is string => part !== undefined)
     .join("  ·  ");
   const rateAxis = `${windowSeconds}s  ·  max ${tpsMax}${tpsMaxAuto ? " auto" : ""}`;
-  lines.push(chartTitle(rateLabels, rateAxis, rateWidth, theme));  const rateColorOf = (value: number) => severityColor(rateSeverity(value, settings.tpsGood, settings.tpsBad, settings.tpsFast), theme, mode);
+  lines.push(chartTitle(rateLabels, rateAxis, rateWidth, theme));
+  // Colour is judged against the session's own median, not `tpsGood`: the configured thresholds
+  // stay as the *target* lines drawn here. The axis baseline of a speed chart is the worst end,
+  // so the fill fades toward the warm anchor.
+  const baseline = rateBaseline(state);
+  const rateColorOf = (value: number) => severityColor(rateSeverity(value, baseline), theme, mode);
+  const rateBaseColor = severityColor(1, theme, mode);
   const rateLines = [settings.tpsBad, settings.tpsGood, settings.tpsFast].filter((value) => value < tpsMax);
   const rateRows = settings.graphStyle === "braille"
-    ? renderBrailleChart(rateTrace.values, rateWidth, 5, tpsMax, rateColorOf, theme, "right", rateLines)
-    : renderAreaChart(rateTrace.values, rateWidth, 5, tpsMax, rateColorOf, theme, rateLines);
+    ? renderBrailleChart(rateTrace.values, rateWidth, 5, tpsMax, rateColorOf, theme, "right", rateLines, rateBaseColor)
+    : renderAreaChart(rateTrace.values, rateWidth, 5, tpsMax, rateColorOf, theme, rateLines, rateBaseColor);
   for (const row of rateRows) lines.push(row);
 
   lines.push(dim(theme, "─".repeat(Math.max(1, width))));
@@ -1338,12 +1411,15 @@ function renderNormalHud(state: HudState, call: CallStats, d: Derived, now: numb
   // half that is padding — so `graphStyle: "block"` drew empty TTFT and ITL histograms.
   const leftSlots = settings.graphStyle === "braille" ? leftWidth * 2 : leftWidth;
   const rightSlots = settings.graphStyle === "braille" ? rightWidth * 2 : rightWidth;
+  // A latency chart's axis baseline is its *best* end (zero milliseconds), so its fill fades
+  // toward the cool anchor — the mirror of the speed chart above.
+  const latencyBaseColor = severityColor(-1, theme, mode);
   const left = settings.graphStyle === "braille"
-    ? renderBrailleChart(toSlots(ttfts, leftSlots, "left"), leftWidth, 4, ttftMax, ttftColorOf, theme, "left", leftLines)
-    : renderAreaChart(toSlots(ttfts, leftSlots, "left"), leftWidth, 4, ttftMax, ttftColorOf, theme, leftLines);
+    ? renderBrailleChart(toSlots(ttfts, leftSlots, "left"), leftWidth, 4, ttftMax, ttftColorOf, theme, "left", leftLines, latencyBaseColor)
+    : renderAreaChart(toSlots(ttfts, leftSlots, "left"), leftWidth, 4, ttftMax, ttftColorOf, theme, leftLines, latencyBaseColor);
   const right = settings.graphStyle === "braille"
-    ? renderBrailleChart(toSlots(itls, rightSlots, "left"), rightWidth, 4, itlMax, itlColorOf, theme, "left", rightLines)
-    : renderAreaChart(toSlots(itls, rightSlots, "left"), rightWidth, 4, itlMax, itlColorOf, theme, rightLines);
+    ? renderBrailleChart(toSlots(itls, rightSlots, "left"), rightWidth, 4, itlMax, itlColorOf, theme, "left", rightLines, latencyBaseColor)
+    : renderAreaChart(toSlots(itls, rightSlots, "left"), rightWidth, 4, itlMax, itlColorOf, theme, rightLines, latencyBaseColor);
 
   const histTitle = (label: string, median: number | undefined, max: number, columnWidth: number) =>
     truncateToWidth(dim(theme, `${label}  med ${fmtMs(median)}  max ${fmtMs(max)}`), columnWidth, "…", true);
@@ -1416,7 +1492,7 @@ function renderHud(state: HudState, width: number, theme: Theme): string[] {
     const statsRoom = Math.max(0, width - fixed - graphWidth - 2);
     const statsLine = statsRoom > 0 ? truncateToWidth(statsText, statsRoom, "…") : "";
 
-    const bars = sparklineRate(trace.values, [0, tpsMax], settings.tpsGood, settings.tpsBad, settings.tpsFast, theme, settings.colorMode);
+    const bars = sparklineRate(trace.values, [0, tpsMax], rateBaseline(state), theme, settings.colorMode);
     lines.push(`${dim(theme, labelText)} ${bars}${statsLine ? `  ${dim(theme, statsLine)}` : ""}  ${dim(theme, axisText)}`);
   }
 

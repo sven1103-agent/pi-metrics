@@ -118,9 +118,12 @@ The pre-0.1.0 names `rateWindow` / `rateMax` / `rateGood` / `rateBad` / `rateFas
 still read as aliases, so an existing config keeps working. When both a legacy and a new
 key are set, the new key wins.
 
-`tpsGood` and `tpsBad` colour the HUD but are deliberately not printed: they are
-configuration, not measurement, and printing them invited reading them as results.
-`tpsFast` is printed because it also floors the automatic chart ceiling.
+`tpsGood` and `tpsBad` are *targets*, drawn as reference lines on the TPS chart, and
+neither is printed as a number: they are configuration, not measurement, and printing them
+invited reading them as results. `tpsGood` also fills the pressure bar and is the colour
+baseline until the session has a few seconds of its own history. Colour is otherwise
+**relative** — see below — so these thresholds do not decide it. `tpsFast` is printed because
+it also floors the automatic chart ceiling.
 
 ## What it measures
 
@@ -142,21 +145,23 @@ configuration, not measurement, and printing them invited reading them as result
   is measurement (mean and p95); its right side is the chart's own axes — the recording
   window in seconds, then the tok/s ceiling, marked `auto` when derived from the session.
 - **colour** — one cool-to-hot hue ramp carries the value, so throughput and latency are
-  legible without comparing bar heights. In the charts it is applied *vertically*: a bar is
-  filled by the magnitude at each row, so it reads as a gradient rather than a flat slab, and
-  a short (bad) bar keeps its own colour instead of vanishing into a cool base. The direction
-  is per chart, because "good" is up for throughput and down for latency — the TPS graph runs
-  teal at the top, the TTFT/ITL graphs teal at the bottom, turning over at the median line.
-  The anchors run teal → green → amber → red, keyed to `tpsFast` / `tpsGood` / `tpsBad` for
-  throughput, and to the *ratio* to the session median for latency: 3× the median is the warm
-  end and a third of it the cool end, so both directions saturate at the same multiplicative
-  distance. The anchors are ordered so hue only ever moves one way, and every step is
-  interpolated in Oklch rather than RGB, so the midtones stay saturated instead of passing
-  through grey. A braille cell holds one colour across its four sub-rows, so the fade steps
-  once per text row — four or five bands, not a continuous ramp. `colorMode` picks how loud it
-  is: `calm` keeps the theme's own green/amber/red and desaturates them, `vivid` uses
-  hand-picked saturated anchors, `mono` drops hue entirely. `scripts/color-ramp.test.mjs`
-  asserts the hue stays monotone.
+  legible without comparing bar heights. It is **relative, not absolute**: severity is the
+  *ratio* to the session's own typical value, so the same palette means the same thing on an
+  8 tok/s local model and a 200 tok/s hosted one. Both scales are symmetric in that ratio, so a
+  third of typical is the cool end, typical is the middle and three times typical is the warm
+  end. `tpsGood` is only the cold-start stand-in until the session has a few seconds of history.
+  The anchors run teal → green → yellow → dull red; green-to-red read as harsh, so the yellow
+  half gets 70% of the warm range and only the far end reaches red. They are ordered so hue only
+  ever moves one way, and every step is interpolated in Oklch rather than RGB, so the midtones
+  stay saturated instead of passing through grey. In the charts the ramp is applied
+  *vertically*: a bar's top edge carries the colour of its own value and the fill fades toward
+  the axis baseline below. It is keyed to the **bar**, not the axis, so rescaling the axis does
+  not shift existing bars' colours — an earlier version coloured each row from the axis maximum,
+  which does move on its own. Only the top edge is a measurement; the cells below are a gradient.
+  A braille cell holds one colour across its four sub-rows, so the fade steps once per text row.
+  `colorMode` picks how loud it is: `calm` keeps the theme's own colours, `vivid` uses
+  hand-picked saturated anchors, `mono` drops hue entirely. `scripts/color-ramp.test.mjs` asserts
+  the order, the reach, the scale-invariance and the gradient fill.
 - **usage** — the provider's own `usage.output` once a call finishes, which replaces the
   character estimate and makes that call's throughput exact. The input/cache/reasoning split
   and the session cost are not repeated here: Pi's footer already shows both, and its cost

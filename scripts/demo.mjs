@@ -107,24 +107,25 @@ const DELTA_LENGTHS = [3, 4, 3, 2, 4, 3, 3, 5, 2, 4, 3, 3];
 const deltaFor = (index) => "x".repeat(DELTA_LENGTHS[index % DELTA_LENGTHS.length]);
 
 const CALLS = [
-  // Throughput is roughly 1000/itl (decode time is ~tokens x itl), so the inter-token gaps
-  // below walk the colour ramp end to end: teal-green near the `fast` anchor, green just above
-  // `good`, yellow-green through the amber region, orange below `bad`, then a recovery. A demo
-  // where every second were the same shade would prove nothing about the colouring. The hues
-  // in the comments are measured against the shipped anchors (`tpsFast` 100 / `tpsGood` 30 /
-  // `tpsBad` 15), not eyeballed: "red" for the slow call would have been wrong, it renders at
-  // hue 47°, which is orange.
+  // Throughput is roughly 1000/itl. Colour is now *relative* to the session's own median, so
+  // these comments give the rate and where it falls in that session rather than a fixed hue —
+  // the same numbers would map to different colours on a faster or slower provider, which is the
+  // point. The spread is what matters: one call clearly above the median (cool end), one at
+  // about a third of it (warm end), and the rest between.
   //
   // Token counts are deliberately modest. Because throughput depends only on `itl`, shrinking
   // the counts keeps the colours identical while shortening each call — and the whole
   // animation now plays at real time (see REAL_FRAME_MS), so every virtual second here is a
   // real second of the viewer's attention. A 22s loop is a loop nobody finishes.
-  { connect: 140, prefill: 320, tokens: 90, itl: 12, input: 1_240 }, //  ~83 tok/s  hue 186°  teal-green
-  { connect: 90, prefill: 180, tokens: 70, itl: 22, input: 1_380 }, //  ~45 tok/s  hue 166°  green
+  { connect: 140, prefill: 320, tokens: 90, itl: 12, input: 1_240 }, //  ~83 tok/s  well above the median
+  { connect: 90, prefill: 180, tokens: 70, itl: 22, input: 1_380 }, //  ~45 tok/s  above it
   // Stalls part-way, so the `‖ paused` state is visible.
-  { connect: 110, prefill: 260, tokens: 55, itl: 40, input: 1_520, stallAfter: 30, stallMs: 900 }, // ~25 tok/s hue 133° yellow-green
-  { connect: 130, prefill: 420, tokens: 40, itl: 75, input: 1_610 }, //  ~13 tok/s  hue  47°  orange
-  { connect: 80, prefill: 200, tokens: 80, itl: 15, input: 1_740 }, //  ~67 tok/s  hue 177°  green-teal
+  { connect: 110, prefill: 260, tokens: 55, itl: 40, input: 1_520, stallAfter: 30, stallMs: 900 }, // ~25 tok/s near it
+  // Fewer tokens over a longer gap: ~1/3 of the session median, which is what the warm end of
+  // the ramp is reserved for. Kept to the same wall-clock duration as the others so the loop
+  // does not grow.
+  { connect: 130, prefill: 420, tokens: 24, itl: 140, input: 1_610 }, //  ~7 tok/s  warm end
+  { connect: 80, prefill: 200, tokens: 80, itl: 15, input: 1_740 }, //  ~67 tok/s  above it
 ];
 const IDLE_AT_START_MS = 700;
 /** Pause between calls, so the boundary between writing actions is visible in the chart. */
