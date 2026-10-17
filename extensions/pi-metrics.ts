@@ -1002,8 +1002,6 @@ class MetricsWidget {
   }
 }
 
-type HealthToken = "success" | "warning" | "error" | "muted" | "text" | "accent" | "thinkingText";
-
 type LiveState = "waiting" | "writing" | "paused" | "done";
 
 /** The fixed state strip: every state is always shown, the active one highlighted. */
@@ -1037,9 +1035,10 @@ function pressureBar(rate: number | undefined, cells: number, good: number, base
  *
  *   ○ waiting  ● writing  ‖ paused  ✔ done   [██████████░░]  38.0 tok/s  (est)  275 tok
  *
- * The pressure bar is a gauge for the "good baseline": it fills toward `tpsGood`
- * (30 tok/s) and is green once there, brighter green at/above `tpsFast` (100 tok/s),
- * amber between `tpsBad` (15) and `tpsGood`, and red below `tpsBad`.
+ * The pressure bar is a gauge for the "good baseline": it fills toward `tpsGood` (30 tok/s),
+ * so it answers "am I at my target?". Its *colour* answers a different question — "how does this
+ * compare to what this provider normally does?" — and is therefore keyed to the session, not to
+ * those configured numbers. See the module docblock on relative colouring.
  *
  * The trailing `(usage)` / `(est)` tag names where the numbers came from — see the
  * module docblock. It sits directly after the rate because that is the figure the tag
@@ -1281,21 +1280,27 @@ function renderAreaChart(
   const safeMax = Math.max(1, max);
   const shown = values.slice(-width);
   const pad = Math.max(0, width - shown.length);
+  // The row each target line falls in, so the block chart draws them too. `renderAreaChart`
+  // accepted `thresholds` from the start and never read them, which meant `graphStyle: "block"`
+  // silently showed no target lines at all — while the docs described them as drawn on the chart.
+  const ruleRows = new Set(thresholds.map((threshold) => Math.floor((threshold / safeMax) * height)));
   const rows: string[] = [];
   for (let row = height - 1; row >= 0; row--) {
     let line = " ".repeat(pad);
     for (const value of shown) {
       if (value === null) {
-        line += row === 0 ? dim(theme, "·") : " ";
+        line += row === 0 ? dim(theme, "·") : ruleRows.has(row) ? theme.style("─", { fg: theme.colors.dim, dim: true }) : " ";
         continue;
       }
       const total = clamp01(value / safeMax) * height;
       const shade = (bar: Color) => (baseColor ? fillColor(bar, baseColor, depthFromTop(total, row + 0.5)) : bar);
+      // Reference lines show through where no bar covers them, as in the braille chart.
       if (total >= row + 1) line += theme.style("█", { fg: shade(colorOf(value)) });
       else if (total > row) {
         const index = Math.max(0, Math.min(BLOCKS.length - 1, Math.round((total - row) * 8) - 1));
         line += theme.style(BLOCKS[index], { fg: shade(colorOf(value)) });
-      } else line += row === 0 ? dim(theme, "·") : " ";
+      } else if (ruleRows.has(row)) line += theme.style("─", { fg: theme.colors.dim, dim: true });
+      else line += row === 0 ? dim(theme, "·") : " ";
     }
     rows.push(line);
   }
@@ -1445,7 +1450,6 @@ function renderHud(state: HudState, width: number, theme: Theme): string[] {
   }
 
   const d = derive(call, now);
-  const live = call.live;
 
   if (settings.style === "normal") return [renderHeader(state, width, theme), ...renderNormalHud(state, call, d, now, width, theme)];
 
@@ -1755,10 +1759,6 @@ export default function piMetrics(pi: ExtensionAPI): void {
     const current = state.current;
     if (!current) return false;
     return current.requestWall === message.timestamp && current.model === message.model;
-  }
-
-  function keyOf(message: AssistantMessage): { requestWall: number; provider: string; model: string } {
-    return { requestWall: message.timestamp, provider: message.provider, model: message.model };
   }
 
   /* --------------------------------------------------------- event handling */

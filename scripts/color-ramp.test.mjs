@@ -296,6 +296,16 @@ for (const colorMode of ["calm", "vivid"]) {
     const lines = await renderedHud(colorMode, graphStyle);
     const text = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
 
+    // A chart-rendering guard that landed with the colour work: the block renderer accepted
+    // `thresholds` and never read them, so `graphStyle: "block"` drew no target lines at all.
+    if (graphStyle === "block") {
+      const tpsAt = text.findIndex((line) => /TPS tok\/s/.test(line));
+      const tpsRows = text.slice(tpsAt + 1, tpsAt + 6);
+      if (!tpsRows.some((row) => row.includes("─"))) {
+        failures.push(`${colorMode}/block: the TPS chart draws no target lines, so renderAreaChart is ignoring \`thresholds\``);
+      }
+    }
+
     const histAt = text.findIndex((line) => /TTFT ms/.test(line));
     assert.ok(histAt >= 0, `the ${graphStyle} HUD must contain the TTFT/ITL charts`);
     const histRows = lines.slice(histAt + 1, histAt + 5);
