@@ -1,0 +1,44 @@
+# Static analysis (SAST) over the source, on every push and pull request.
+#
+# This exists because CodeQL's *default setup* does not register as SAST with supply-chain scans.
+# With default setup enabled, Scorecard still reported:
+#
+#   SAST: score=0 — "SAST tool is not run on all commits" / "0 commits out of 1 are checked"
+#
+# because there was no workflow for it to see. An explicit workflow is visible, and it analyses
+# the commits themselves.
+#
+# Default setup and an explicit workflow are mutually exclusive: the analyze step fails with
+# "advanced configurations cannot be processed when default setup is enabled". Default setup is
+# therefore disabled for this repository, and this file is the only CodeQL configuration.
+name: CodeQL
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  schedule:
+    # Weekly, so a new query release reaches a repository that has not changed.
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      security-events: write # to upload results to code scanning
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          languages: javascript-typescript
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0

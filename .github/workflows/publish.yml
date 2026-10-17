@@ -43,9 +43,11 @@ on:
         required: true
         type: string
 
+# Least privilege at the *job* level, not the workflow: Scorecard's Token-Permissions check
+# flagged the top-level `contents: write` here and nothing else in the repository. Only the job
+# below needs it (to create the draft release), so only that job is granted it.
 permissions:
-  id-token: write # required for OIDC trusted publishing
-  contents: write # required to create the draft GitHub release
+  contents: read
 
 concurrency:
   group: publish
@@ -54,6 +56,9 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required for OIDC trusted publishing
+      contents: write # required to create the draft GitHub release
     steps:
       - name: Resolve release tag
         run: |
@@ -63,11 +68,11 @@ jobs:
             echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
           fi
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
@@ -160,13 +165,11 @@ jobs:
           - \`npm view @sven1103-agent/pi-metrics@${VERSION} dist.attestations\` — published from this
             repository through npm trusted publishing, so it carries a provenance attestation
           - compare \`${RELEASE_TAG}\` with \`package.json\`
-
-          This is a draft until the staged npm version is approved; see the workflow run summary.
           EOF
 
       # Draft: this run staged the version but cannot confirm it was approved, so nothing is
       # announced until a maintainer has done both. A draft is not sent to watchers.
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           body_path: ${{ runner.temp }}/release-notes.md
