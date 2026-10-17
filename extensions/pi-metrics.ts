@@ -625,11 +625,11 @@ function severityColor(severity: number, theme: Theme, mode: ColorMode): Color {
 }
 
 /**
- * Severity of a throughput value, in four bands:
+ * Severity of a throughput value, as four regions of one ramp:
  *
  *   rate >= fast          -> -1           (excellent)
- *   good <= rate < fast   -> 0 … -1       (healthy; greener as it approaches fast)
- *   bad  <= rate < good   -> 0 … +0.5     (amber band; the "slower than baseline" zone)
+ *   good <= rate < fast   -> 0 … -1       (healthy; cooler as it approaches fast)
+ *   bad  <= rate < good   -> 0 … +0.5     (amber region; the "slower than baseline" zone)
  *   rate <  bad           -> +0.75 … +1   (clearly bad)
  *
  * The old mapping was a single `1 - rate/good` below the good baseline, which put a rate
