@@ -2,7 +2,9 @@
 
 Notable changes per release. This project follows [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] — 2026-10-16
+## 0.1.0 — unreleased
+
+Not yet tagged: the date and the release link are added at that point.
 
 First public release.
 
@@ -90,5 +92,3 @@ rename of them:
   subcommand now warns instead of silently toggling the HUD.
 - `cost` is honoured. It was declared, defaulted and documented, but read by nothing; it
   now gates the cost column in `/metrics report` and on the persisted card.
-
-[0.1.0]: https://github.com/sven1103-agent/pi-metrics/releases/tag/v0.1.0
