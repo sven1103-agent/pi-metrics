@@ -1,0 +1,132 @@
+# Publish to npm on a version tag.
+#
+# This repo has NO npm token, here or in repository secrets, and that is deliberate: npm's OIDC
+# *trusted publishing* mints a short-lived credential per run, scoped to this repository and this
+# workflow filename, so there is nothing long-lived to leak or rotate. `id-token: write` below is
+# what enables it; the published version automatically carries a SLSA provenance attestation.
+#
+# The trust side lives in npm's configuration, not here:
+#
+#   npmjs.com -> @sven1103-agent/pi-metrics -> Settings -> Trusted Publisher -> GitHub Actions
+#     Organization or user : sven1103-agent
+#     Repository           : pi-metrics
+#     Workflow filename    : publish.yml        <- must match this file's name exactly
+#
+# One-time bootstrap, because npm cannot create a package through OIDC: the *first* version has
+# to be published by a logged-in maintainer (`npm publish` locally, or a short-lived granular
+# token), and only then can the trusted publisher be registered. Do those two steps close
+# together — a newly created trusted-publisher configuration must complete its first publish
+# within 2 days or it expires, and it can then only be deleted and recreated.
+#
+# After that this workflow is the only publisher, and `npm publish` should be disabled for token
+# access (Settings -> Publishing access) so a stolen token cannot bypass it.
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (must match package.json)
+        required: true
+        type: string
+
+permissions:
+  id-token: write # required for OIDC trusted publishing
+  contents: write # required to create the GitHub release
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve release tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "RELEASE_TAG=${{ inputs.tag }}" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false # never cache in a release build
+
+      # Trusted publishing with a dist-tag needs npm >= 11.21.0, and the npm bundled with a Node
+      # release can be older (Node 26 ships 11.20.0). Pin nothing; just take the current one.
+      - name: Update npm
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      - name: Check tag matches package version
+        run: |
+          TAG_VERSION="${RELEASE_TAG#v}"
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "Tag $RELEASE_TAG does not match package.json version $PACKAGE_VERSION." >&2
+            exit 1
+          fi
+
+      - name: Install
+        run: npm ci
+
+      # The publish gate is the same one CI runs, so a tag cannot ship something CI would reject.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Pack (dry run)
+        run: npm pack --dry-run
+
+      - name: Resolve npm dist-tag
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          DIST_TAG="latest"
+          # A pre-release version publishes under its own identifier, e.g. 1.0.0-alpha.4 -> alpha,
+          # so it never takes `latest` from a stable release.
+          if [[ "$VERSION" == *-* ]]; then
+            DIST_TAG="${VERSION#*-}"
+            DIST_TAG="${DIST_TAG%%.*}"
+          fi
+          echo "NPM_DIST_TAG=$DIST_TAG" >> "$GITHUB_ENV"
+
+      - name: Publish
+        run: npm publish --tag "$NPM_DIST_TAG"
+
+      - name: Prepare release notes
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          cat <<EOF > "$RUNNER_TEMP/release-notes.md"
+          ## Install
+
+          - pi package: \`pi install npm:@sven1103-agent/pi-metrics\`
+          - pinned to this tag: \`pi install git:github.com/sven1103-agent/pi-metrics@${RELEASE_TAG}\`
+          - npm: \`npm install @sven1103-agent/pi-metrics\`
+
+          ## Verify
+
+          - \`npm view @sven1103-agent/pi-metrics@${VERSION} dist.attestations\` — this version is
+            published from this repository through npm trusted publishing, so it carries a
+            provenance attestation
+          - compare \`${RELEASE_TAG}\` with \`package.json\`
+          EOF
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          body_path: ${{ runner.temp }}/release-notes.md
+          generate_release_notes: true

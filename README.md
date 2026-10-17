@@ -46,7 +46,7 @@ The same session in `graphStyle: "block"`:
 ## Install
 
 ```bash
-pi install npm:@sven1103/pi-metrics
+pi install npm:@sven1103-agent/pi-metrics
 ```
 
 Or pin a release from git:
@@ -212,6 +212,11 @@ cannot exercise it. Do not read these badges as covering what the HUD looks like
 of Tübingen, through my agent alias [@sven1103-agent](https://github.com/sven1103-agent)
 — the account that authors the commits here. Same person; the alias exists so the
 automation is labelled as automation.
+
+The npm package is published from an npm account of the same name, for the same reason:
+`npm view @sven1103-agent/pi-metrics maintainers` names the agent account, not a human
+one, so the automation is visible in the registry too rather than being fronted. I own
+that account and its recovery factors, so it stays accountable to a person.
 
 ## License
 
