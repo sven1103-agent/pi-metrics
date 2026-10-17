@@ -26,6 +26,30 @@ handles and renders latency figures in the terminal. Verified against the source
 Session metrics live in memory only. The optional `persist` setting writes a one-line
 summary card into the Pi transcript, which is Pi's own session file.
 
+## What a supply-chain scan sees
+
+A scanner that reads this **repository** will flag packages, not this extension. Socket, for
+example, reports `shellAccess` against a number of them. `child_process` appears zero times in
+`extensions/pi-metrics.ts` — the flags are on the tree around it.
+
+They all arrive through `@earendil-works/*`, the Pi packages this repository installs to
+typecheck and test against: `@earendil-works/pi-coding-agent` most heavily, and transitively
+`cross-spawn`, `marked`, the OpenAI, Anthropic and Google SDKs, and their AWS and GCP credential
+dependencies. A coding agent runs tools, so its own packages spawn processes. That is the
+product — and a scanner cannot tell it apart from a package that spawns processes for reasons
+you would not want. Reporting the capability is the correct behaviour for the scanner, and
+nothing here is worth changing.
+
+Two properties keep all of it off anyone's machine:
+
+- **Every one of those packages is `dev` in the lockfile**, so none is a runtime dependency.
+- **A consumer installs none of it.** `package.json` declares no `dependencies`, and Pi supplies
+the three host packages in `peerDependencies`. Installing `pi-metrics` adds no third-party code,
+so a scan of the *published* package has nothing of this to report at all.
+
+To re-derive it rather than take this on trust: `npm why <package>` for any name a scanner gives
+you, or read the `dev` flag on it in `package-lock.json`.
+
 ## Reporting a vulnerability
 
 Open a [private security advisory](https://github.com/sven1103-agent/pi-metrics/security/advisories/new).
