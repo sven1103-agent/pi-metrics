@@ -89,6 +89,85 @@ for (const width of realWidths) {
 }
 
 assert.equal(failures.length, 0, `\n${failures.join("\n")}`);
+
+/* ------------------------------------------------ the ceiling on an outlier ---- */
+
+/**
+ * The automatic ceiling must not chase a single outlier second.
+ *
+ * p98 is not a robust statistic at the sample counts this chart has: p98 of thirty seconds is
+ * the second-highest, so one burst moved the ceiling and rescaled every other bar with it. A
+ * measured session of nine seconds at 150 tok/s plus one at 900 went from a flat line along the
+ * bottom (ceiling 1500) to a solid slab (ceiling = the bare median, 150) before headroom was
+ * added. The assertion is that *growing the outlier does not move the axis at all*.
+ *
+ * Rate R for one second is `R` four-character deltas 1000/R ms apart, so each per-second bucket
+ * is exactly R and the second is exactly 1000 ms long.
+ */
+async function axisForOutlier(burst) {
+  const rates = [150, 150, 150, 150, 150, 150, 150, 150, 150, burst];
+  let t = 1_000_000;
+  const realNow = performance.now;
+  const realDate = Date.now;
+  performance.now = () => t;
+  Date.now = () => 1_700_000_000_000 + (t - 1_000_000);
+  try {
+    const handlers = new Map();
+    let captured;
+    const pi = {
+      on: (n, f) => handlers.set(n, f),
+      registerCommand: () => {}, registerEntryRenderer: () => {}, appendEntry: () => {},
+      getSettings: () => ({ "pi-metrics": { style: "normal", graphStyle: "braille", tpsWindow: 10 } }),
+      reload: async () => {}, log: () => {},
+    };
+    const ctx = {
+      isIdle: () => false, hasUI: true, mode: "tui",
+      ui: { notify: () => {}, setStatus: () => {}, setWidget: (_k, c) => { captured = c; } },
+    };
+    await factory(pi);
+    const fire = (n, e) => handlers.get(n)(e, ctx);
+    await fire("session_start", {});
+    const message = {
+      role: "assistant", provider: "test", model: "test-model", api: "openai-completions",
+      timestamp: Date.now(), content: [], stopReason: "stop",
+    };
+    t += 90; fire("before_provider_request", {});
+    t += 1; fire("after_provider_response", {});
+    fire("message_start", { message });
+    t += 300;
+    for (const rate of rates) {
+      const itl = 1_000 / rate;
+      for (let k = 0; k < rate; k++) {
+        fire("message_update", { message, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "xxxx", partial: message } });
+        t += itl;
+      }
+    }
+    t += 20;
+    message.usage = { input: 10, output: rates.reduce((a, b) => a + b, 0), cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+    message.durationMs = 10_000;
+    fire("message_end", { message });
+    t += 200;
+    captured({ requestRender: () => {} }, theme).render(100); // flush the per-second history
+    const lines = captured({ requestRender: () => {} }, theme).render(100).map(plain);
+    return /max (\d+) auto/.exec(lines.find((line) => /TPS/.test(line) && /tok\/s/.test(line)))?.[1];
+  } finally {
+    performance.now = realNow;
+    Date.now = realDate;
+  }
+}
+
+const typicalBurst = await axisForOutlier(900);
+const hugeBurst = await axisForOutlier(9000);
+if (typicalBurst === undefined || hugeBurst === undefined) {
+  failures.push(`could not read the automatic ceiling (${typicalBurst} / ${hugeBurst})`);
+} else if (typicalBurst !== hugeBurst) {
+  failures.push(
+    `the automatic ceiling chases the outlier: a 900 tok/s burst gives max ${typicalBurst} but a ` +
+      `9000 tok/s burst gives max ${hugeBurst}, so one second rescales every other bar`,
+  );
+}
+assert.equal(failures.length, 0, `\n${failures.join("\n")}`);
+
 for (const width of realWidths) {
   const title = (await renderAt(width)).find((line) => /TPS/.test(line) && /tok\/s/.test(line));
   console.log(`${String(width).padStart(3)}: ${title.trim()}`);

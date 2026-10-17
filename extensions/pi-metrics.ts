@@ -145,7 +145,7 @@
  *       "graphStyle": "braille",       // "braille" | "block"
  *       "colorMode": "calm",           // "calm" | "vivid" | "mono"
  *       "tpsWindow": 120,             // seconds of history in the TPS chart
- *       "tpsMax": "auto",            // "auto" (session p98, floor `tpsFast`) or a fixed tok/s
+ *       "tpsMax": "auto",            // "auto" (session median x2, floor `tpsFast`) or a fixed tok/s
  *       "tpsGood": 30,               // target line; also the cold-start colour baseline
  *       "tpsBad": 15,                // target line, drawn on the chart
  *       "tpsFast": 100,              // target line; floors the automatic chart ceiling
@@ -203,8 +203,9 @@ interface MetricsSettings {
   /** Seconds of history shown by the TPS chart. */
   tpsWindow?: number;
   /**
-   * Top of the TPS graph and pressure-bar fill, in tok/s, or "auto" to derive it from
-   * the session's own p98 (never below `tpsFast`, so a slow provider is not zoomed in).
+   * Top of the TPS graph, in tok/s, or "auto" to derive it from the session's own median
+   * (doubled, and never below `tpsFast`). The median rather than a high percentile so one
+   * outlier second cannot rescale every other bar.
    */
   tpsMax?: number | "auto";
   /**
@@ -702,19 +703,34 @@ function niceCeil(value: number): number {
  *
  * A fixed ceiling is the wrong shape for a HUD that has to serve both a local 8 tok/s
  * llama.cpp and a 400 tok/s API: too high and the fast provider is a solid slab, too low
- * and a slow one looks pegged. So "auto" tracks the session's own p98.
+ * and a slow one looks pegged. So "auto" tracks the session.
  *
- * The `tpsFast` floor is what keeps that honest: without it a slow session would get
- * `max ≈ 30` and a mediocre provider would fill the chart. With it, `tpsGood` can never
- * sit higher than 30% of the height, so "below the good line" always reads as low.
+ * It tracks the session by its **median**, because a high percentile is not robust at the sample
+ * counts this chart has. p98 of thirty seconds is the second-highest one, so a single outlier
+ * second — a burst after a stall, a cached response — moved the ceiling and rescaled every other
+ * bar with it. The median ignores that completely.
+ *
+ * `RATE_HEADROOM` matters as much as the statistic. With a bare median the *typical* second sits
+ * at the top of the chart and half the bars are pinned there, which trades one unreadable chart
+ * for another: a measured 9-seconds-at-150-plus-one-at-900 session went from a flat line along
+ * the bottom (ceiling 1500) to a solid slab (ceiling 150). Doubling it puts the typical second at
+ * half height. The trade is real and deliberate: a genuine peak now exceeds the ceiling and
+ * renders at full height, so the top of the chart reads "at or above typical" rather than
+ * resolving the fast half.
+ *
+ * The `tpsFast` floor still applies, and still stops a slow session getting `max ≈ 30`: with it,
+ * the `good` line can never sit higher than a third of the height, so "below the good line"
+ * always reads as low.
  */
+const RATE_HEADROOM = 2;
+
 function resolveRateMax(history: number[], setting: number | "auto", tpsFast: number): { max: number; auto: boolean } {
   const floor = Math.max(1, tpsFast);
   // A non-positive number is a typo, not a request for a 1 tok/s axis; treat it as auto.
   if (setting !== "auto" && Number.isFinite(setting) && setting > 0) return { max: setting, auto: false };
-  const p98 = percentile(history, 0.98);
-  if (p98 === undefined || !(p98 > 0)) return { max: niceCeil(floor), auto: true };
-  return { max: Math.max(niceCeil(p98 * 1.15), niceCeil(floor)), auto: true };
+  const middle = percentile(history, 0.5);
+  if (middle === undefined || !(middle > 0)) return { max: niceCeil(floor), auto: true };
+  return { max: Math.max(niceCeil(middle * RATE_HEADROOM), niceCeil(floor)), auto: true };
 }
 
 /**

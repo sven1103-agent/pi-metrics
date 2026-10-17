@@ -102,7 +102,7 @@ All optional, under the `pi-metrics` key in `~/.pi/agent/settings.json`:
 
 `style` is `compact` (four lines) or `normal` (multi-row graphs). `graphStyle` is
 `braille` or `block`. `colorMode` is `calm`, `vivid` or `mono`. `tpsMax` is a fixed tok/s
-ceiling or `auto` (session p98, never below `tpsFast`). `charsPerToken` is `auto`
+ceiling or `auto` (twice the session median, never below `tpsFast`). `charsPerToken` is `auto`
 (calibrate from this session) or a fixed characters-per-token divisor. `persist` appends a
 one-line card per call to the transcript. `cost` adds a cost column to `/metrics report` and
 to the persisted card. It is deliberately not shown on the HUD: Pi's footer already carries a

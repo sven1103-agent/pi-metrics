@@ -49,6 +49,15 @@ rename of them:
   edge is a measurement, the cells below are a gradient. A braille cell carries one colour
   across four sub-rows, so the fade steps once per text row. The one-row sparklines in the
   persisted card keep the per-sample colour, the only thing a single row can show.
+- The automatic TPS ceiling is derived from the session **median**, doubled, instead of p98.
+  p98 is not robust at the sample counts this chart has — p98 of thirty seconds is the
+  second-highest — so one outlier second moved the ceiling and rescaled every other bar with
+  it: a measured 9-seconds-at-150-plus-one-at-900 session got a 1500 ceiling and rendered as a
+  flat line along the bottom. The median is unmoved by that, though a *bare* median swaps one
+  unreadable chart for another (the same session became a solid slab at ceiling 150), hence the
+  doubling, which puts the typical second at half height. Deliberate trade: a genuine peak now
+  exceeds the ceiling and renders at full height. `scripts/hud-layout.test.mjs` asserts that
+  growing the outlier does not move the axis at all.
 - `graphStyle: "block"` actually draws its TTFT and ITL histograms. Both were handed the
   braille slot count (two samples per cell) while the block renderer only ever reads the last
   `width` slots — the padding half — so the two charts rendered empty, and the README's own
