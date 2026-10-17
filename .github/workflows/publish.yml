@@ -1,25 +1,35 @@
-# Publish to npm on a version tag.
+# Release on a version tag: stage the package, then a human approves it.
 #
-# This repo has NO npm token, here or in repository secrets, and that is deliberate: npm's OIDC
-# *trusted publishing* mints a short-lived credential per run, scoped to this repository and this
-# workflow filename, so there is nothing long-lived to leak or rotate. `id-token: write` below is
-# what enables it; the published version automatically carries a SLSA provenance attestation.
+# There is no npm token here, and that is deliberate. npm's OIDC *trusted publishing* mints a
+# short-lived credential per run, scoped to this repository and this workflow filename, so there
+# is nothing long-lived to leak or rotate.
 #
-# The trust side lives in npm's configuration, not here:
+# The trust record lives in npm's configuration, not here:
 #
 #   npmjs.com -> @sven1103-agent/pi-metrics -> Settings -> Trusted Publisher -> GitHub Actions
 #     Organization or user : sven1103-agent
 #     Repository           : pi-metrics
 #     Workflow filename    : publish.yml        <- must match this file's name exactly
+#     Environment name     : (empty)            <- this workflow declares no environment
+#     Allowed actions      : leave `npm publish` and `npm dist-tag` OFF
+#
+# That last line is the point. `npm stage publish` is always permitted, and direct `npm publish`
+# is opt-in — leaving it off means a compromised workflow can only *stage* a release, never ship
+# one. npm's own guidance is to leave it off. The cost is that every release needs a human:
+#
+#   1. a tag push runs this workflow, which stages the version on npm
+#   2. a maintainer approves it with 2FA — `npm stage approve <id>` or the npm website
+#   3. only then does the version appear on the registry, and the draft GitHub release below
+#      can be published
+#
+# Because step 2 is outside CI, this workflow cannot verify that the version is live, so the
+# GitHub release is created as a **draft**: the notes are ready, and nothing is announced before
+# the package actually exists.
 #
 # One-time bootstrap, because npm cannot create a package through OIDC: the *first* version has
-# to be published by a logged-in maintainer (`npm publish` locally, or a short-lived granular
-# token), and only then can the trusted publisher be registered. Do those two steps close
-# together — a newly created trusted-publisher configuration must complete its first publish
-# within 2 days or it expires, and it can then only be deleted and recreated.
-#
-# After that this workflow is the only publisher, and `npm publish` should be disabled for token
-# access (Settings -> Publishing access) so a stolen token cannot bypass it.
+# to be published by a logged-in maintainer, and only then can the trusted publisher be
+# registered. A newly created trusted-publisher record must complete its first publish within 2
+# days or it expires, and existing records cannot be edited — only deleted and recreated.
 name: Publish
 
 on:
@@ -35,7 +45,7 @@ on:
 
 permissions:
   id-token: write # required for OIDC trusted publishing
-  contents: write # required to create the GitHub release
+  contents: write # required to create the draft GitHub release
 
 concurrency:
   group: publish
@@ -82,7 +92,7 @@ jobs:
       - name: Install
         run: npm ci
 
-      # The publish gate is the same one CI runs, so a tag cannot ship something CI would reject.
+      # The release gate is the same one CI runs, so a tag cannot ship something CI would reject.
       - name: Typecheck
         run: npm run typecheck
 
@@ -92,20 +102,48 @@ jobs:
       - name: Pack (dry run)
         run: npm pack --dry-run
 
+      # A pre-release publishes under its own identifier (1.0.0-alpha.4 -> alpha) so it never takes
+      # `latest` from a stable release. For a stable version the resolved tag is `latest`, which is
+      # npm's default, so it is omitted rather than passed: a trust record that has not been
+      # granted `npm dist-tag` may otherwise refuse it.
       - name: Resolve npm dist-tag
         run: |
           VERSION="${RELEASE_TAG#v}"
           DIST_TAG="latest"
-          # A pre-release version publishes under its own identifier, e.g. 1.0.0-alpha.4 -> alpha,
-          # so it never takes `latest` from a stable release.
           if [[ "$VERSION" == *-* ]]; then
             DIST_TAG="${VERSION#*-}"
             DIST_TAG="${DIST_TAG%%.*}"
           fi
           echo "NPM_DIST_TAG=$DIST_TAG" >> "$GITHUB_ENV"
 
-      - name: Publish
-        run: npm publish --tag "$NPM_DIST_TAG"
+      # Stage, do not publish. `npm stage publish` is always permitted for a trusted publisher;
+      # direct `npm publish` is not, on purpose.
+      - name: Stage the release
+        run: |
+          if [ "$NPM_DIST_TAG" = "latest" ]; then
+            npm stage publish
+          else
+            npm stage publish --tag "$NPM_DIST_TAG"
+          fi
+
+      - name: Report what a maintainer must do next
+        run: |
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Staged, not published
+
+          \`@sven1103-agent/pi-metrics@${RELEASE_TAG#v}\` has been staged. Nothing is on the
+          registry yet, and this workflow cannot put it there: the trusted publisher is
+          deliberately not allowed to run \`npm publish\`.
+
+          To release it, a maintainer approves the staged version with 2FA:
+
+          \`\`\`bash
+          npm stage list @sven1103-agent/pi-metrics   # find the id
+          npm stage approve <id>
+          \`\`\`
+
+          Or approve it on npmjs.com. Then publish the draft GitHub release created by this run.
+          EOF
 
       - name: Prepare release notes
         run: |
@@ -119,14 +157,18 @@ jobs:
 
           ## Verify
 
-          - \`npm view @sven1103-agent/pi-metrics@${VERSION} dist.attestations\` — this version is
-            published from this repository through npm trusted publishing, so it carries a
-            provenance attestation
+          - \`npm view @sven1103-agent/pi-metrics@${VERSION} dist.attestations\` — published from this
+            repository through npm trusted publishing, so it carries a provenance attestation
           - compare \`${RELEASE_TAG}\` with \`package.json\`
+
+          This is a draft until the staged npm version is approved; see the workflow run summary.
           EOF
 
+      # Draft: this run staged the version but cannot confirm it was approved, so nothing is
+      # announced until a maintainer has done both. A draft is not sent to watchers.
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           body_path: ${{ runner.temp }}/release-notes.md
           generate_release_notes: true
+          draft: true
