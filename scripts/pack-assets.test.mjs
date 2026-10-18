@@ -3,7 +3,7 @@
  *
  * README.md references its animations with *relative* paths:
  *
- *   ![The pi-metrics HUD, braille graphs](docs/assets/hud-braille.gif)
+ *   ![The pi-metrics HUD, braille graphs](docs/assets/hud-braille.webp)
  *
  * That is deliberately not an absolute URL, so the same file works on GitHub, in an editor
  * preview, and in a local checkout. The cost is that every consumer has to resolve
@@ -11,9 +11,9 @@
  * `files` in package.json whitelists.
  *
  * For 0.1.0 it whitelisted three of the four files that matter, so the published tarball
- * carried README.md without the two GIFs it points at. GitHub rendered the animations;
- * npm and the Pi gallery did not. The gallery rewrites relative README paths to a jsDelivr
- * URL *inside the tarball*, so it shipped two 404s:
+ * carried README.md without the two animations it points at. GitHub rendered them from the
+ * repository; npm and the Pi gallery did not. The gallery rewrites relative README paths to
+ * a jsDelivr URL *inside the tarball*, so it shipped two 404s:
  *
  *   https://cdn.jsdelivr.net/npm/@sven1103-agent/pi-metrics@0.1.0/docs/assets/hud-braille.gif
  *
@@ -22,7 +22,8 @@
  *
  * So: every relative image path in README.md must be present in the packed tarball.
  * Regenerate the animations with scripts/record-demo.sh; if you add a new one, add it to
- * the README and this test follows automatically.
+ * the README and this test follows automatically. It names no file extension on purpose, so
+ * the GIF -> WebP change (0.1.1) needed no edit here.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";

@@ -8,6 +8,8 @@ PI_METRICS_TRACE*
 scripts/_*.mjs
 
 # Recording intermediates. The .cast files are ~4 MB each and fully regenerable from
-# scripts/demo.mjs, so only the rendered GIFs are committed. See "Regenerating the demo
-# animation" in the README.
+# scripts/demo.mjs, so only the rendered WebP animations are committed. The intermediate .gif
+# that agg writes is removed by the recorder rather than ignored here, because ignoring it
+# would leave a 250 KB stale file in the tree that nothing cleans up. See "Regenerating the
+# demo animation" in the README.
 docs/assets/*.cast

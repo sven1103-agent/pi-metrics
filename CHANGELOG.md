@@ -15,13 +15,19 @@ Documentation and packaging fixes. The extension's behaviour, settings keys and 
 layout are unchanged from 0.1.0, so this is a drop-in replacement.
 
 - **The README animations are now actually published.** `files` whitelisted `README.md` but
-  not the two GIFs it references, so `docs/assets/hud-braille.gif` and `hud-block.gif` were
-  absent from the tarball and every relative image URL resolved to a 404. GitHub renders
-  them from the repository, which hid the problem: only the *published* consumers were
-  broken, and the Pi gallery is one of them, because it resolves relative README paths
-  against the tarball (`cdn.jsdelivr.net/npm/@sven1103-agent/pi-metrics@0.1.0/docs/assets/...`).
-  `files` now includes `docs/assets/*.gif`. `scripts/pack-assets.test.mjs` asserts that every
-  relative image in the README is present in `npm pack` output, so the two cannot drift again.
+  not the two images it references, so they were absent from the tarball and every relative
+  image URL resolved to a 404. GitHub renders them from the repository, which hid the
+  problem: only the *published* consumers were broken, and the Pi gallery is one of them,
+  because it resolves relative README paths against the tarball
+  (`cdn.jsdelivr.net/npm/@sven1103-agent/pi-metrics@0.1.0/docs/assets/...`). `files` now
+  includes `docs/assets/*.webp`. `scripts/pack-assets.test.mjs` asserts that every relative
+  image in the README is present in `npm pack` output, so the two cannot drift again.
+- **The animations are animated WebP, not GIF.** Same 798x341 canvas, same 128 frames, same
+  duration, byte-identical pixels — and 535 KB of GIF became 348 KB, a 35% reduction on every
+  clone and every npm fetch of the README. `gif2webp` in its default lossless mode is both
+  smaller *and* exact here, because terminal frames are flat, few-colour images; lossy `-q`
+  actually came out larger. `scripts/record-demo.sh` now renders via agg to a temporary GIF
+  and converts, deleting both intermediates so only the `.webp` is committed.
 - `package.json` declares an explicit `pi` manifest, naming the extension entry point and a
   gallery preview image, instead of relying on `extensions/` directory discovery. This is not
   cosmetics: Pi treats a present-but-extensionless `pi` object as authoritative and skips

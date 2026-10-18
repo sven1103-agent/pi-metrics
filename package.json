@@ -39,13 +39,13 @@
     "extensions/pi-metrics.ts",
     "README.md",
     "LICENSE",
-    "docs/assets/*.gif"
+    "docs/assets/*.webp"
   ],
   "pi": {
     "extensions": [
       "./extensions/pi-metrics.ts"
     ],
-    "image": "https://raw.githubusercontent.com/sven1103-agent/pi-metrics/main/docs/assets/hud-braille.gif"
+    "image": "https://raw.githubusercontent.com/sven1103-agent/pi-metrics/main/docs/assets/hud-braille.webp"
   },
   "engines": {
     "node": ">=22.19.0"
