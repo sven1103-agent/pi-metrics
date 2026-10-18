@@ -22,10 +22,16 @@ so the cadence you see is the cadence the HUD actually has. The figures are illu
 they exercise the states and the colour ramp the HUD can show, and are not a benchmark.
 Regenerate with `scripts/record-demo.sh`.
 
-**Contents:** [Install](#install) · [What the HUD shows](#what-the-hud-shows) ·
-[Commands](#commands) · [Settings](#settings) · [What it measures](#what-it-measures) ·
-[Supported Pi versions](#supported-pi-versions) · [What it does not do](#what-it-does-not-do) ·
-[Maintained by](#maintained-by)
+**Contents**
+
+- [Install](#install)
+- [What the HUD shows](#what-the-hud-shows)
+- [Commands](#commands)
+- [Settings](#settings)
+- [What it measures](#what-it-measures)
+- [Supported Pi versions](#supported-pi-versions)
+- [What it does not do](#what-it-does-not-do)
+- [Maintained by](#maintained-by)
 
 ## Install
 
