@@ -1,7 +1,7 @@
 {
   "name": "@sven1103-agent/pi-metrics",
   "version": "0.1.0",
-  "description": "Live LLM latency HUD for the Pi coding agent: TTFT, inter-token latency, throughput and cost.",
+  "description": "Live LLM latency HUD for the Pi coding agent: TTFT, inter-token latency and decode throughput.",
   "license": "MIT",
   "publishConfig": {
     "access": "public"
