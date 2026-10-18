@@ -13,13 +13,20 @@
  *   ITL    inter-token latency   — mean gap between consecutive streamed deltas.
  *                                  This is stream *smoothness*, not throughput:
  *                                  some providers batch several tokens per delta.
- *   TTOUT  time to output end    — wall time of the whole response (E2E).
- *   tok/s  decode throughput     — output tokens / TTOUT.
+ *   tok/s  decode throughput     — output tokens over the decode window, i.e. first streamed
+ *                                  token → output end. It is NOT output tokens / TTOUT: the
+ *                                  prefill wait is excluded. The TPS row is a session timeline
+ *                                  (one column per completed writing second) rather than a
+ *                                  single ratio.
+ *   TTOUT  time to output end    — wall time of the whole response (E2E). Not on the HUD panel:
+ *                                  it is a report column, a persisted-card field, and part of
+ *                                  the one-line status shown when the HUD is toggled off.
  *
  * Note what is deliberately NOT claimed here: the input/cache/reasoning token split and the
  * session cost. Pi's own footer already shows those, and its cost total additionally includes
  * compaction and branch-summary usage, which an extension observing `message_end` never sees.
- * Repeating either would be redundant at best and a contradictory second number at worst.
+ * Repeating either would be redundant at best and a contradictory second number at worst. The
+ * per-call cost in `/metrics report` and the persisted card is the one figure kept.
  *
  * Rendering — a labelled panel above the editor by default. The top rule is the HUD's
  * outer edge (and names the model); the editor's own border closes it at the bottom,
@@ -140,12 +147,12 @@
  *       "persist": false,             // append a one-line card per call to the transcript
  *       "timeline": true,
  *       "liveTimeline": true,
- *       "cost": true,                 // cost column in `/metrics report` (Pi's footer shows the session total)
+ *       "cost": true,                 // per-call cost column in `/metrics report` and the card
  *       "style": "normal",             // "compact" | "normal"
  *       "graphStyle": "braille",       // "braille" | "block"
  *       "colorMode": "calm",           // "calm" | "vivid" | "mono"
  *       "tpsWindow": 120,             // seconds of history in the TPS chart
- *       "tpsMax": "auto",            // "auto" (session median x2, floor `tpsFast`) or a fixed tok/s
+ *       "tpsMax": "auto",            // "auto" (session p90 + headroom, floor `tpsFast`) or a fixed tok/s
  *       "tpsGood": 30,               // target line; also the cold-start colour baseline
  *       "tpsBad": 15,                // target line, drawn on the chart
  *       "tpsFast": 100,              // target line; floors the automatic chart ceiling
