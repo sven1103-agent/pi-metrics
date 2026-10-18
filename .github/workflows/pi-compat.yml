@@ -164,3 +164,28 @@ jobs:
             grep -o "error TS[0-9]*: .*" tsc.log | sort | uniq -c
           fi
           exit 0
+
+  # The branch ruleset requires a status check named "Pi compatibility". GitHub matches
+  # required checks against *job* (check-run) names, not the workflow name, and both
+  # matrices above report as "supported (1.3.0)", "legacy (1.0.0)", ... — the workflow
+  # name never appears as a check-run, so a ruleset naming it waits forever.
+  #
+  # Rather than list every matrix leg in the ruleset (and edit it whenever a Pi version
+  # is added), this one job carries the required name and gates on the whole matrix. It
+  # only exists because of that gate: if the check name in the ruleset is ever changed,
+  # keep this job's name in sync, or the ruleset will silently stop gating anything.
+  gate:
+    name: Pi compatibility
+    if: ${{ always() }}
+    needs: [supported, legacy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every Pi lane to have succeeded
+        run: |
+          echo "supported: ${{ needs.supported.result }}"
+          echo "legacy:    ${{ needs.legacy.result }}"
+          if [ "${{ needs.supported.result }}" != "success" ] || [ "${{ needs.legacy.result }}" != "success" ]; then
+            echo "::error::a Pi compatibility lane did not succeed"
+            exit 1
+          fi
+          echo "all Pi compatibility lanes succeeded"
