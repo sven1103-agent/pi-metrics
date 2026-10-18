@@ -7,9 +7,10 @@ release — behaviour, settings keys, the rendered layout, and the extension's e
 including in a patch. No version below `1.0.0` is a compatibility promise. `1.0.0` is the first
 release that will define a stable API, and it is the target being built towards.
 
-## 0.1.1 — unreleased
+[0.1.1]: https://github.com/sven1103-agent/pi-metrics/releases/tag/v0.1.1
+[0.1.0]: https://github.com/sven1103-agent/pi-metrics/releases/tag/v0.1.0
 
-Not yet tagged: the date and the release link are added at that point.
+## [0.1.1] — 2026-10-18
 
 Documentation and packaging fixes. The extension's behaviour, settings keys and rendered
 layout are unchanged from 0.1.0, so this is a drop-in replacement.
@@ -34,10 +35,14 @@ layout are unchanged from 0.1.0, so this is a drop-in replacement.
   directory discovery, so a manifest added later for preview fields alone would have silently
   disabled the extension. Verified against the real binary — `pi` with `image` and no
   `extensions` loads nothing, while an explicit `extensions` entry loads as before.
+- `scripts/pack-assets.test.mjs` reads `npm pack --json` in both shapes. npm 12 returns an
+  object keyed by package name where npm 11 returns an array, and the test indexed `[0]`, so it
+  crashed on the one run that matters: the release job installs `npm@latest` for trusted
+  publishing, while CI and local runs stay on the bundled 11.x. The first `v0.1.1` tag run
+  failed at Test with a `TypeError` against a release that was otherwise complete, so that tag
+  was replaced after the fix.
 
-## 0.1.0 — unreleased
-
-Not yet tagged: the date and the release link are added at that point.
+## [0.1.0] — 2026-10-17
 
 First public **development** release, not the stable one — see the note above.
 

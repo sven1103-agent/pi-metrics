@@ -49,10 +49,16 @@ const relative = [...new Set(references.filter(isRelative))];
 assert.ok(relative.length > 0, "README.md should reference at least one relative image");
 
 // `npm pack --dry-run --json` reports exactly what would be published, honouring `files`.
-// It still touches the network for nothing, so prefer the local manifest when possible.
-const packed = JSON.parse(
+// The shape is not stable across npm majors: 11.x returns an array, 12.x an object keyed by
+// package name. That matters here because the release workflow installs `npm@latest` for
+// trusted publishing while CI keeps the bundled 11.x, so this test meets both. Reading it as
+// an array crashed the first 0.1.1 release run on npm 12 alone — everything else passed.
+const report = JSON.parse(
   execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: root, encoding: "utf8" }),
-)[0].files.map((entry) => posix.normalize(entry.path));
+);
+const manifest = Array.isArray(report) ? report[0] : Object.values(report)[0];
+assert.ok(manifest?.files, "`npm pack --dry-run --json` should report a file list");
+const packed = manifest.files.map((entry) => posix.normalize(entry.path));
 
 const missing = relative.filter((ref) => {
   // README paths are relative to the package root, which is the tarball root.
