@@ -2,18 +2,29 @@
 #
 # Regenerate the README animations from scripts/demo.mjs.
 #
-# The committed GIFs are build output, not source. This script is what produces them, so a
-# change to the HUD can be reflected in the docs without guessing at the original settings.
+# The committed animations are build output, not source. This script is what produces them,
+# so a change to the HUD can be reflected in the docs without guessing at the original
+# settings. Both the intermediate .cast and the intermediate .gif are removed; only the
+# .webp is committed.
 #
-# Requires: asciinema, agg (https://github.com/asciinema/agg)
+# Requires: asciinema, agg (https://github.com/asciinema/agg), gif2webp (libwebp)
 #
 #   ./scripts/record-demo.sh
+#
+# Output is animated WebP, not GIF. agg can only write GIF, so each recording is rendered to
+# a temporary GIF and then converted with `gif2webp` in its **default lossless** mode. That
+# is not a compromise: terminal frames are flat, few-colour images, so lossless WebP comes
+# out ~35% smaller than the GIF (535K -> 348K across both animations) *and* decodes to
+# byte-identical pixels. Verified frame-by-frame: 128/128 frames match on both, with the same
+# 798x341 canvas and the same total duration. Do not reach for `-q`: lossy here is larger
+# than lossless and would only add artefacts. Keep the GIFs out of the repository and out of
+# `files`; the README references the .webp directly.
 #
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-for tool in asciinema agg node; do
+for tool in asciinema agg gif2webp node; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 
@@ -29,6 +40,7 @@ ROWS=20
 for mode in braille block; do
   cast="docs/assets/hud-$mode.cast"
   gif="docs/assets/hud-$mode.gif"
+  webp="docs/assets/hud-$mode.webp"
   echo "recording $mode …"
   asciinema rec \
     --output-format asciicast-v2 \
@@ -45,8 +57,13 @@ for mode in braille block; do
     --idle-time-limit 1 --last-frame-duration 0 \
     --theme asciinema \
     "$cast" "$gif" >/dev/null
-  rm -f "$cast"
-  echo "  wrote $gif ($(du -h "$gif" | cut -f1))"
+
+  # Default (lossless) gif2webp: no -q, no -lossy, no -min_size. -m 6 is the slowest and
+  # smallest search; this runs twice a release, so the CPU is free.
+  gif2webp -m 6 -mt "$gif" -o "$webp" >/dev/null
+
+  rm -f "$cast" "$gif"
+  echo "  wrote $webp ($(du -h "$webp" | cut -f1))"
 done
 
 echo "done."
