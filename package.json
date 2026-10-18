@@ -1,6 +1,6 @@
 {
   "name": "@sven1103-agent/pi-metrics",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Live LLM latency HUD for the Pi coding agent: TTFT, inter-token latency and decode throughput.",
   "license": "MIT",
   "publishConfig": {
@@ -38,8 +38,15 @@
   "files": [
     "extensions/pi-metrics.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/assets/*.gif"
   ],
+  "pi": {
+    "extensions": [
+      "./extensions/pi-metrics.ts"
+    ],
+    "image": "https://raw.githubusercontent.com/sven1103-agent/pi-metrics/main/docs/assets/hud-braille.gif"
+  },
   "engines": {
     "node": ">=22.19.0"
   },
@@ -58,7 +65,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/smoke.mjs && node scripts/tokens.test.mjs && node scripts/tps-accuracy.test.mjs && node scripts/settings-alias.test.mjs && node scripts/hud-layout.test.mjs && node scripts/commands.test.mjs && node scripts/color-ramp.test.mjs && node scripts/docs-sync.test.mjs && node scripts/demo-pacing.test.mjs",
+    "test": "node scripts/smoke.mjs && node scripts/tokens.test.mjs && node scripts/tps-accuracy.test.mjs && node scripts/settings-alias.test.mjs && node scripts/hud-layout.test.mjs && node scripts/commands.test.mjs && node scripts/color-ramp.test.mjs && node scripts/docs-sync.test.mjs && node scripts/pack-assets.test.mjs && node scripts/demo-pacing.test.mjs",
     "smoke": "node scripts/smoke.mjs"
   }
 }
