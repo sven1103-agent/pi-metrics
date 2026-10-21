@@ -10,6 +10,33 @@ release that will define a stable API, and it is the target being built towards.
 [0.1.1]: https://github.com/sven1103-agent/pi-metrics/releases/tag/v0.1.1
 [0.1.0]: https://github.com/sven1103-agent/pi-metrics/releases/tag/v0.1.0
 
+## [Unreleased]
+
+- **The HUD's TPS `avg`/`p95` are now window-scoped; the complete session estimate moved into
+  the record.** The title's `avg` and `p95` were computed over the whole session while the
+  bars beside them were drawn from the last `tpsWindow` seconds, and the two diverged as a
+  session grew: a session mean absorbs a live degradation (an hour of history barely moves for
+  a bad minute) and a session p95 stays pinned by one old burst forever, so neither could
+  answer *how is it going right now?* — the one question a live HUD exists to answer. They are
+  now computed over the window the chart actually draws, which also makes the `120s` on the
+  axis the scope of the numbers beside it.
+
+  Two scopes deliberately did **not** follow. The auto ceiling is a *scale*: windowing it would
+  rescale every bar each time history rolled out of the window, undoing the axis stability the
+  p90 work bought. The colour baseline is a *bias*: windowing it would re-centre on a sustained
+  degradation until the warm bars went green again, hiding the thing it exists to show.
+
+  So the whole-session figure had to land somewhere, and `/metrics report` is it: the table now
+  closes with a `TPS` line giving `session avg`, `p95` and `max`, beside the same figures over
+  the window and the number of seconds recorded. The figures ride on the report entry rather
+  than being recomputed, so a resumed session renders what it measured. `scripts/tps-window.test.mjs`
+  pins all of it differentially — a fast half followed by a slow half must move `avg`/`p95`
+  when the window narrows, and must not move the ceiling at all.
+- **`/metrics report` no longer depends on the HUD having rendered.** The per-second history
+  was only flushed while drawing the widget, so with the HUD off — or in `print` mode — the
+  report's new session summary would have been empty. A finished call now folds its seconds
+  into the session history directly. The flush is idempotent, so a later render adds nothing.
+
 ## [0.1.1] — 2026-10-18
 
 Documentation and packaging fixes. The extension's behaviour, settings keys and rendered

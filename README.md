@@ -119,9 +119,14 @@ The rest of the row, left to right:
 
 The **TPS chart** is a session timeline, one column per completed writing second, height =
 tokens generated that second. It is never reset per call, so separate writing actions stay
-comparable. The title's left side is measurement (`avg`, `p95`); its right side is the chart's
-own axes — the recording window in seconds, then the tok/s ceiling, marked `auto` when derived
-from the session.
+comparable. The title's left side is measurement (`avg`, `p95`) over the **window the chart
+is drawing** — a live HUD has to answer *how is it going right now?*, and a whole-session
+mean absorbs a degradation as the session grows while a whole-session p95 stays pinned by one
+old burst, so both would sit still while the bars beside them dropped. Its right side is the
+chart's own axes — the recording window in seconds, then the tok/s ceiling, marked `auto`
+when derived from the session. So `120s` names the scope of the `avg`/`p95` beside it; the
+ceiling and the bar colour stay session-wide on purpose (see below). The complete,
+whole-session estimate is in `/metrics report`, not on the HUD.
 
 The **HIST charts** plot TTFT and ITL one column per call. In `style: "normal"` they sit side
 by side, with the session median drawn as a reference line and the median and max in the title;
@@ -133,7 +138,7 @@ in `compact`, each gets a one-line sparkline beside its median.
 |---|---|
 | `/metrics` | toggle the HUD |
 | `/metrics on` · `/metrics off` | explicit toggle |
-| `/metrics report` | append a table of recent calls to the transcript |
+| `/metrics report` | append a table of recent calls to the transcript, closed by a session TPS summary |
 | `/metrics reset` | forget the calls recorded in this session |
 | `/metrics placement above` · `below` | move the panel |
 | `/metrics style compact` · `normal` | four lines, or multi-row graphs |
@@ -228,7 +233,7 @@ that is printed, because it also floors the automatic chart ceiling.
 | **TTFT** | Time to first token: request → first streamed token, as a session median. |
 | **ITL** | Inter-token latency: gap between streamed deltas, as a median and p95. |
 | **tok/s** | Decode throughput: output tokens over the decode window (first token → end). |
-| **TPS** | The session timeline of tok/s, one column per completed second. |
+| **TPS** | The session timeline of tok/s, one column per completed second. The HUD's `avg`/`p95` are over the chart window; `/metrics report` gives both the window and whole-session figures. |
 | **TTOUT** | Time to output end: wall time of the whole response. |
 
 A few properties are worth stating explicitly, because the figures can mislead without them:
@@ -253,6 +258,18 @@ A few properties are worth stating explicitly, because the figures can mislead w
   vertically: a bar's top edge carries the colour of its own value and the fill fades toward
   the axis baseline below. `colorMode` picks how loud it is: `calm` keeps the theme's own
   colours, `vivid` uses saturated anchors, `mono` drops hue entirely.
+- **The HUD's `avg`/`p95` are windowed; the record's are session-wide.** The TPS title
+  reports the mean and p95 of the last `tpsWindow` seconds — the span the bars cover — because
+  a live feed has to reflect the present. The complete, whole-session figures are not lost:
+  `/metrics report` closes with a `TPS` line giving `session avg`, `p95` and `max` beside the
+  same numbers over the window and how many seconds were recorded, and the report entry stores
+  them, so a resumed session renders what it measured. Two scopes side by side is deliberate:
+  the window is what the HUD drew live, the session is the whole record.
+- **The TPS ceiling and bar colour stay session-wide.** They are not measurements and must not
+  move with the window. The ceiling is a *scale*: windowing it would rescale every bar each
+  time history rolled out of the window. The colour baseline is a *bias*: windowing it would
+  re-centre on a sustained degradation until the warm bars went green again, hiding exactly
+  what it exists to show.
 - **`TTOUT` is not on the HUD panel.** It appears in `/metrics report`, in the persisted card,
   and in the one-line status shown when the HUD is toggled off — alongside the per-call cost.
 
