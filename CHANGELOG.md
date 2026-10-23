@@ -7,10 +7,14 @@ release — behaviour, settings keys, the rendered layout, and the extension's e
 including in a patch. No version below `1.0.0` is a compatibility promise. `1.0.0` is the first
 release that will define a stable API, and it is the target being built towards.
 
+[0.2.0]: https://github.com/sven1103-agent/pi-metrics/releases/tag/v0.2.0
 [0.1.1]: https://github.com/sven1103-agent/pi-metrics/releases/tag/v0.1.1
 [0.1.0]: https://github.com/sven1103-agent/pi-metrics/releases/tag/v0.1.0
 
-## [Unreleased]
+## [0.2.0] — 2026-10-23
+
+A behaviour change to the TPS headline, and the latent bug it uncovered. The HUD's `avg`/`p95`
+now measure the window the chart draws; the whole-session estimate moved into the record.
 
 - **The HUD's TPS `avg`/`p95` are now window-scoped; the complete session estimate moved into
   the record.** The title's `avg` and `p95` were computed over the whole session while the
@@ -36,6 +40,8 @@ release that will define a stable API, and it is the target being built towards.
   was only flushed while drawing the widget, so with the HUD off — or in `print` mode — the
   report's new session summary would have been empty. A finished call now folds its seconds
   into the session history directly. The flush is idempotent, so a later render adds nothing.
+- The README's git install example is updated to `v0.2.0`, and the committed demo animations
+  are re-recorded, since the TPS title they show is the line this release changed.
 
 ## [0.1.1] — 2026-10-18
 

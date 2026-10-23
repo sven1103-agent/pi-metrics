@@ -42,7 +42,7 @@ pi install npm:@sven1103-agent/pi-metrics
 Or pin a release from git:
 
 ```bash
-pi install git:github.com/sven1103-agent/pi-metrics@v0.1.1
+pi install git:github.com/sven1103-agent/pi-metrics@v0.2.0
 ```
 
 <details>
