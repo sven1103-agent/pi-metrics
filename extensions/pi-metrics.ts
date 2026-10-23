@@ -22,6 +22,16 @@
  *                                  it is a report column, a persisted-card field, and part of
  *                                  the one-line status shown when the HUD is toggled off.
  *
+ * The TPS title line carries two scopes, and the `120s` on its right names the one the
+ * numbers use. `avg`/`p95` are over the chart's window, because a live HUD has to answer
+ * "how is it going right now?" — a session mean absorbs a degradation as the session grows
+ * and a session p95 stays pinned by one old burst. The ceiling and the colour baseline stay
+ * session-wide: a windowed ceiling would rescale every bar as history rolled out of the
+ * window, and a windowed baseline would re-centre on a sustained degradation until the warm
+ * bars went green again. `/metrics report` closes with a `TPS` line giving the complete
+ * session estimate (`session avg`/`p95`/`max`) beside the same figures over the window, so
+ * the whole-session number the HUD no longer shows is still in the record.
+ *
  * Note what is deliberately NOT claimed here: the input/cache/reasoning token split and the
  * session cost. Pi's own footer already shows those, and its cost total additionally includes
  * compaction and branch-summary usage, which an extension observing `message_end` never sees.
@@ -455,7 +465,30 @@ interface SerializedCall {
   error?: string;
 }
 
-type MetricsEntryData = { kind: "call"; call: SerializedCall } | { kind: "report"; calls: SerializedCall[]; generatedAt: number };
+type MetricsEntryData =
+  | { kind: "call"; call: SerializedCall }
+  | { kind: "report"; calls: SerializedCall[]; generatedAt: number; session?: SessionRateSummary };
+
+/**
+ * The complete, session-wide throughput estimate — the figure the HUD deliberately no
+ * longer shows, because a whole-session mean and p95 cannot answer "how is it going right
+ * now?". `/metrics report` writes it into the record so the complete estimate is not lost,
+ * and it rides on the entry itself rather than being recomputed, so a resumed session still
+ * renders the numbers the session actually measured.
+ */
+interface SessionRateSummary {
+  /** Per-second samples the whole session contributed (one per completed writing second). */
+  samples: number;
+  /** Mean over every recorded second. */
+  avg?: number;
+  /** p95 over every recorded second. */
+  p95?: number;
+  max?: number;
+  /** The span the HUD chart draws, and the same statistics over just that span. */
+  windowSeconds?: number;
+  windowAvg?: number;
+  windowP95?: number;
+}
 
 /* ------------------------------------------------------------- small helpers */
 
@@ -846,6 +879,18 @@ function flushRateHistory(state: HudState, call: CallStats, d: Derived): void {
   if (!call.live) correctCallTokens(state, call);
   const cap = 4_000;
   if (state.rateHistory.length > cap) state.rateHistory.splice(0, state.rateHistory.length - cap);
+}
+
+/**
+ * The per-second samples the TPS chart is currently drawing: the last `windowSeconds`
+ * entries of the session history. Shorter sessions return everything they have.
+ *
+ * The title's `avg` and `p95` are computed from this, so they describe the same span as
+ * the bars beside them. The chart's *scale* (the auto ceiling) and its *colour baseline*
+ * deliberately stay session-wide instead: see the call sites for why.
+ */
+function rateWindow(history: number[], windowSeconds: number): number[] {
+  return history.length > windowSeconds ? history.slice(-windowSeconds) : history;
 }
 
 /** Last `columns` session seconds, oldest left, blank where the session has no data yet. */
@@ -1395,8 +1440,14 @@ function renderNormalHud(state: HudState, call: CallStats, d: Derived, now: numb
   const { max: tpsMax, auto: tpsMaxAuto } = resolveRateMax(state.rateHistory, settings.tpsMax, settings.tpsFast);
   const rateColumns = settings.graphStyle === "braille" ? rateWidth * 2 : rateWidth;
   const rateTrace = buildSessionRateTrace(state, rateColumns, windowSeconds);
-  const averageRate = mean(state.rateHistory);
-  const p95Rate = percentile(state.rateHistory, 0.95);
+  // The headline numbers describe the window the chart is drawing, not the whole session:
+  // a session mean hides a live degradation as the session grows, and a session p95 stays
+  // pinned by one old burst forever, so neither could answer "how is it going right now?"
+  // The ceiling below stays session-wide on purpose — a moving ceiling would rescale every
+  // bar on each rollout of history, which is the axis instability the p90 work removed.
+  const rateSample = rateWindow(state.rateHistory, windowSeconds);
+  const averageRate = mean(rateSample);
+  const p95Rate = percentile(rateSample, 0.95);
   // Left is measurement, right is the chart's own axes. The `good`/`bad` thresholds used to
   // be printed here; they are configuration rather than measurement, and the colour already
   // encodes them, so they are gone. `fast` stays because it is not merely a colour bound: it
@@ -1499,8 +1550,11 @@ function renderHud(state: HudState, width: number, theme: Theme): string[] {
     const windowSeconds = Math.max(10, Math.round(settings.tpsWindow));
     const labelText = "TPS";
     const padded = (value: string) => value.padStart(6);
-    const averageRate = mean(state.rateHistory);
-    const p95Rate = percentile(state.rateHistory, 0.95);
+    // Window-scoped measurement beside a session-scoped ceiling; same reasoning as the
+    // tall layout. The window is what the full-width chart is drawing right here.
+    const rateSample = rateWindow(state.rateHistory, windowSeconds);
+    const averageRate = mean(rateSample);
+    const p95Rate = percentile(rateSample, 0.95);
     const { max: tpsMax, auto: tpsMaxAuto } = resolveRateMax(state.rateHistory, settings.tpsMax, settings.tpsFast);
     // The recording window and the ceiling are attributes of the chart, not of the data, so
     // they sit together at the right instead of reading as a prefix to the graph.
@@ -1632,7 +1686,46 @@ function buildReportRows(calls: CallStats[], includeCost: boolean): ReportRow[] 
   });
 }
 
-function renderReport(rows: ReportRow[], settings: ResolvedSettings, theme: Theme): string[] {
+function sessionRateSummary(state: HudState): SessionRateSummary {
+  const history = state.rateHistory;
+  const windowSeconds = Math.max(10, Math.round(state.settings.tpsWindow));
+  const windowed = rateWindow(history, windowSeconds);
+  return {
+    samples: history.length,
+    avg: mean(history),
+    p95: percentile(history, 0.95),
+    max: maxOf(history),
+    windowSeconds,
+    windowAvg: mean(windowed),
+    windowP95: percentile(windowed, 0.95),
+  };
+}
+
+/**
+ * The session summary line under the report table.
+ *
+ * This is where the *complete* throughput estimate lives now that the HUD's `avg`/`p95`
+ * describe only the chart window. Both scopes are printed together, because that pair is
+ * the interesting comparison: the window is what the HUD drew live, the session is the
+ * whole record. It closes the report with the figures the rows above cannot answer — a
+ * table of per-call `tok/s` says nothing about the session's typical second or its tail.
+ */
+function renderRateSummary(summary: SessionRateSummary | undefined, theme: Theme): string | undefined {
+  if (!summary || summary.samples === 0 || summary.avg === undefined) return undefined;
+  const parts: (string | undefined)[] = [
+    dim(theme, "TPS"),
+    theme.fg("text", `session avg ${Math.round(summary.avg)} tok/s`),
+    summary.p95 !== undefined ? theme.fg("text", `p95 ${Math.round(summary.p95)}`) : undefined,
+    summary.max !== undefined ? theme.fg("text", `max ${Math.round(summary.max)}`) : undefined,
+    summary.windowAvg !== undefined && summary.windowSeconds !== undefined
+      ? theme.fg("muted", `${summary.windowSeconds}s window avg ${Math.round(summary.windowAvg)}${summary.windowP95 !== undefined ? ` · p95 ${Math.round(summary.windowP95)}` : ""}`)
+      : undefined,
+    dim(theme, `${summary.samples}s recorded`),
+  ];
+  return parts.filter((part): part is string => part !== undefined).join("  ");
+}
+
+function renderReport(rows: ReportRow[], settings: ResolvedSettings, theme: Theme, summary?: SessionRateSummary): string[] {
   const medianRowItl = percentile(rows.map((row) => row.itlMs).filter((value): value is number => value !== undefined), 0.5);
   // Drop the cost column entirely when the setting is off, rather than printing a column
   // of dashes: the setting is advertised as "show cost", and a blank column is not that.
@@ -1656,6 +1749,11 @@ function renderReport(rows: ReportRow[], settings: ResolvedSettings, theme: Them
       return theme.fg("text", text);
     });
     lines.push(cells.join("  "));
+  }
+  const summaryLine = renderRateSummary(summary, theme);
+  if (summaryLine) {
+    lines.push("");
+    lines.push(summaryLine);
   }
   return lines;
 }
@@ -2003,6 +2101,13 @@ export default function piMetrics(pi: ExtensionAPI): void {
       // Nothing useful to show (e.g. an immediately failed request).
     }
 
+    // Fold the finished call's seconds into the session history here rather than waiting for
+    // the next HUD render. The live HUD does flush while drawing, but the record must be
+    // complete without one: the HUD can be off, `mode` can be `print`, and `/metrics report`
+    // reads this history for its session summary. Idempotent — `flushedSeconds` tracks what
+    // was already pushed, so a later render adds nothing.
+    flushRateHistory(state, call, derive(call, performance.now()));
+
     state.calls.push(call);
     if (state.calls.length > state.settings.history) state.calls = state.calls.slice(-state.settings.history);
 
@@ -2123,7 +2228,12 @@ export default function piMetrics(pi: ExtensionAPI): void {
             ctx.ui.notify("no LLM calls recorded yet", "warning");
             return;
           }
-          pi.appendEntry(CUSTOM_TYPE, { kind: "report", calls: calls.map(serialize), generatedAt: Date.now() } satisfies MetricsEntryData);
+          pi.appendEntry(CUSTOM_TYPE, {
+            kind: "report",
+            calls: calls.map(serialize),
+            generatedAt: Date.now(),
+            session: sessionRateSummary(state),
+          } satisfies MetricsEntryData);
           return;
         }
         case "":
@@ -2162,6 +2272,6 @@ export default function piMetrics(pi: ExtensionAPI): void {
     }
     const calls = data.calls.map((call) => ({ ...call, live: false } as CallStats));
     const rows = buildReportRows(calls, state.settings.cost);
-    return new Text(renderReport(rows, state.settings, theme).join("\n"), 1, 0);
+    return new Text(renderReport(rows, state.settings, theme, data.session).join("\n"), 1, 0);
   });
 }

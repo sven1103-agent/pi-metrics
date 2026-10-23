@@ -218,6 +218,7 @@ async function reportText(costSetting) {
 
   const entry = appended.find((e) => e.data?.kind === "report");
   assert.ok(entry, "expected a report entry");
+  assert.ok(entry.data.session, "the report entry must carry the session rate summary");
   const renderer = renderers.get("pi-metrics");
   assert.ok(renderer, "expected an entry renderer");
   const component = renderer({ data: entry.data }, {}, theme);
@@ -230,5 +231,16 @@ assert.ok(/cost/.test(costOn), `cost: true must show the cost column:\n${costOn}
 assert.ok(/\$0\.003/.test(costOn), `cost: true must show the amount:\n${costOn}`);
 assert.ok(!/cost/.test(costOff), `cost: false must drop the column entirely, not blank it:\n${costOff}`);
 console.log("7. cost:true shows the column and amount, cost:false drops the column");
+
+// --- 8. the report carries the complete session rate estimate ----------------------
+// The HUD's `avg`/`p95` are window-scoped (see scripts/tps-window.test.mjs), so the report
+// is where the whole-session figure has to live, or windowing the HUD would lose it. Both
+// scopes are printed, and the report entry stores the numbers rather than recomputing them,
+// so a resumed session renders what it actually measured.
+assert.ok(/TPS\s+session avg \d+ tok\/s/.test(costOn), `the report must print the session average:\n${costOn}`);
+assert.ok(/p95 \d+/.test(costOn), `the report must print the session p95:\n${costOn}`);
+assert.ok(/window avg \d+/.test(costOn), `the report must also print the window figures:\n${costOn}`);
+assert.ok(/\d+s recorded/.test(costOn), `the report must say how many seconds it covers:\n${costOn}`);
+console.log("8. report prints session and window TPS summary");
 
 console.log("\nall command-surface assertions passed");
